@@ -76,12 +76,15 @@ export async function voiceProviderFor(deps: VoiceDeps, provider: string) {
 /** The catalog as this account sees it: `modelConnection` stays only where it has one. */
 export async function accountVoiceCatalog(deps: VoiceDeps, actor: Pick<Actor, "userId">) {
   const catalog = listVoiceCatalog({ allowPrivateEndpoint: deps.env?.mcpAllowPrivateEndpoint });
+  const liveCalls = voiceLiveCallsEnabled(deps);
   return Promise.all(
-    catalog.map(async ({ modelConnection, ...entry }) =>
-      modelConnection && (await findModelCredential(deps.prisma, actor, entry.id))
+    // Live calls are offered only where this server allows them.
+    catalog.map(async ({ modelConnection, conversation, ...rest }) => {
+      const entry = conversation && liveCalls ? { ...rest, conversation } : rest;
+      return modelConnection && (await findModelCredential(deps.prisma, actor, entry.id))
         ? { ...entry, modelConnection }
-        : entry,
-    ),
+        : entry;
+    }),
   );
 }
 
@@ -112,7 +115,7 @@ export function voiceLiveCallsEnabled(deps: Pick<VoiceDeps, "env">): boolean {
 }
 
 export function toVoiceStatus(
-  cred: { provider: string; voiceId: string } | null,
+  cred: { provider: string; voiceId: string; liveCalls?: boolean } | null,
   options: { liveCalls?: boolean } = {},
 ): VoiceStatus {
   const entry = cred ? catalogEntry(cred.provider) : undefined;
@@ -121,7 +124,12 @@ export function toVoiceStatus(
     ready: Boolean(cred?.voiceId),
     transcribe: Boolean(entry?.transcribe && cred),
     conversation: Boolean(
-      options.liveCalls && entry && "conversation" in entry && entry.conversation && cred?.voiceId,
+      options.liveCalls &&
+        cred?.liveCalls &&
+        entry &&
+        "conversation" in entry &&
+        entry.conversation &&
+        cred.voiceId,
     ),
     provider: cred?.provider ?? null,
     voiceId: cred?.voiceId ?? "",
@@ -134,6 +142,7 @@ export function toVoiceCredential(row: {
   isDefault: boolean;
   voiceId: string;
   speechModel?: string | null;
+  liveCalls?: boolean;
   server?: { endpoint: string; ttsModel: string; sttModel: string };
   /** False when the connection uses the account's model connection instead of a key. */
   hasKey?: boolean;
@@ -146,6 +155,7 @@ export function toVoiceCredential(row: {
     voiceId: row.voiceId,
     speechModel: row.speechModel ?? "",
     transcribe: Boolean(catalogEntry(row.provider)?.transcribe),
+    liveCalls: Boolean(row.liveCalls),
     endpoint: row.server?.endpoint ?? "",
     ttsModel: row.server?.ttsModel ?? "",
     sttModel: row.server?.sttModel ?? "",
@@ -367,6 +377,8 @@ export async function persistVoiceCredential(
     baseUrl?: string;
     ttsModel?: string;
     sttModel?: string;
+    /** Opt into live calls; kept only for a provider that can talk live. */
+    liveCalls?: boolean;
     /** Which copy the connection becomes the default voice in; omitted is what applies. */
     scope?: SettingsScope;
     signal?: AbortSignal;
@@ -442,6 +454,10 @@ export async function persistVoiceCredential(
     voiceId = voices[0]?.id ?? "";
     validVoiceIds = voices.map((voice) => voice.id);
   }
+  const liveEntry = voiceCatalogEntry(input.provider);
+  const liveCalls = Boolean(
+    input.liveCalls && liveEntry && "conversation" in liveEntry && liveEntry.conversation,
+  );
   const stored = await deps.secrets.put(plaintext, voiceContext(actor, input.signal));
   const cred = await withTransactionRetry(() =>
     deps.prisma.$transaction(
@@ -465,11 +481,12 @@ export async function persistVoiceCredential(
                 userId: actor.userId,
                 provider: input.provider,
                 secretId: secret.id,
+                liveCalls,
               },
             })
           : await tx.userVoiceCredential.update({
               where: { id: existing.id },
-              data: { secretId: secret.id },
+              data: { secretId: secret.id, liveCalls },
             });
         await lockSpaceSettings(tx, actor);
         const target = await voicePreferenceTarget(tx, actor, input.scope);

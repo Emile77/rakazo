@@ -15,6 +15,7 @@ import {
 import { fetchFresh } from "@rakazo/core/query";
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogClose,
   DialogContent,
@@ -101,6 +102,8 @@ export function VoiceSettingsOverlay({
   const [baseUrl, setBaseUrl] = useState(cached?.credential?.endpoint ?? "");
   const [ttsModel, setTtsModel] = useState(cached?.credential?.ttsModel ?? "");
   const [sttModel, setSttModel] = useState(cached?.credential?.sttModel ?? "");
+  const [liveCalls, setLiveCalls] = useState(cached?.credential?.liveCalls ?? false);
+  const liveCallsId = useId();
   // The connection fields as last rendered, read when a connect finishes.
   const connection = useRef({ speechModel, baseUrl, ttsModel, sttModel });
   connection.current = { speechModel, baseUrl, ttsModel, sttModel };
@@ -147,6 +150,7 @@ export function VoiceSettingsOverlay({
     if (!keep("baseUrl")) setBaseUrl(cred?.endpoint ?? "");
     if (!keep("ttsModel")) setTtsModel(cred?.ttsModel ?? "");
     if (!keep("sttModel")) setSttModel(cred?.sttModel ?? "");
+    if (!keepForm) setLiveCalls(cred?.liveCalls ?? false);
     if (!cred) return Promise.resolve();
     return queryClient
       .fetchQuery(
@@ -258,6 +262,7 @@ export function VoiceSettingsOverlay({
           // The server drops this voice when the address or speech model really changed.
           voiceId: voiceId || undefined,
           ...(selected.speechModel ? { speechModel: speechModel.trim() } : {}),
+          ...(selected.conversation ? { liveCalls } : {}),
           ...(selfHosted
             ? {
                 baseUrl: baseUrl.trim(),
@@ -489,6 +494,28 @@ export function VoiceSettingsOverlay({
                   />
                 </Field>
               )}
+              {selected.conversation ? (
+                <div className="mt-5 flex items-start gap-3">
+                  <Checkbox
+                    id={liveCallsId}
+                    className="mt-0.5"
+                    checked={liveCalls}
+                    disabled={busy}
+                    onCheckedChange={(checked) => setLiveCalls(checked === true)}
+                  />
+                  <label htmlFor={liveCallsId} className="min-w-0 flex-1 text-body">
+                    <span className="font-medium text-foreground">
+                      <Trans>Live calls</Trans>
+                    </span>
+                    <span className="mt-0.5 block text-muted-foreground">
+                      <Trans>
+                        Talk naturally and interrupt anytime; the bot still does the real work.
+                        Billed by the minute by the provider. Applies when you connect.
+                      </Trans>
+                    </span>
+                  </label>
+                </div>
+              ) : null}
               {selfHosted ? (
                 <>
                   <Field className="mt-5">

@@ -34,7 +34,7 @@ vi.mock("@rakazo/db", async (importOriginal) => ({
 
 vi.mock("./voice.js", () => ({
   resolveVoiceTarget: vi.fn(async () => ({
-    cred: { provider: "test" },
+    cred: { provider: "test", liveCalls: true },
     apiKey: "test-key",
     voiceId: "cedar",
     linked: false,

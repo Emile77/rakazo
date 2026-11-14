@@ -176,6 +176,11 @@ export function createConversationCalls(deps: ConversationCallDeps) {
       });
       if (!bot) throw new IsolationError();
       const target = await resolveVoiceTarget(deps, actor, { botId: input.botId });
+      if (!target.cred.liveCalls) {
+        throw new ORPCError("PRECONDITION_FAILED", {
+          message: "Live calls are off for this voice.",
+        });
+      }
       const provider = await voiceProviderFor(deps, target.cred.provider);
       const { openConversation, attachConversation } = provider;
       if (

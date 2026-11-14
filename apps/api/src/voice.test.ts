@@ -43,11 +43,22 @@ describe("toVoiceStatus", () => {
 
   it("offers live conversation only for a chosen voice whose provider holds one", () => {
     const on = { liveCalls: true };
-    expect(toVoiceStatus({ provider: "openai", voiceId: "cedar" }, on).conversation).toBe(true);
-    expect(toVoiceStatus({ provider: "openai", voiceId: "" }, on).conversation).toBe(false);
-    expect(toVoiceStatus({ provider: "elevenlabs", voiceId: "rachel" }, on).conversation).toBe(
+    const opted = { liveCalls: true };
+    expect(
+      toVoiceStatus({ provider: "openai", voiceId: "cedar", ...opted }, on).conversation,
+    ).toBe(true);
+    expect(toVoiceStatus({ provider: "openai", voiceId: "", ...opted }, on).conversation).toBe(
       false,
     );
+    expect(
+      toVoiceStatus({ provider: "elevenlabs", voiceId: "rachel", ...opted }, on).conversation,
+    ).toBe(false);
+  });
+
+  it("offers no live conversation unless the user ticked live calls", () => {
+    expect(
+      toVoiceStatus({ provider: "openai", voiceId: "cedar" }, { liveCalls: true }).conversation,
+    ).toBe(false);
   });
 
   it("offers no live conversation unless the server turned live calls on", () => {

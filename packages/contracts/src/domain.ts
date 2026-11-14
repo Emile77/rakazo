@@ -1355,6 +1355,8 @@ export const VoiceCredentialSchema = z.object({
   /** Fish speech-model override. Empty uses the deployment default. */
   speechModel: z.string(),
   transcribe: z.boolean(),
+  /** The user turned on live calls for this connection. */
+  liveCalls: z.boolean().default(false),
   /** Self-hosted server base URL and model ids (never the key). Empty for hosted providers. */
   endpoint: z.string().default(""),
   ttsModel: z.string().default(""),

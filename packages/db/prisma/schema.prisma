@@ -920,6 +920,8 @@ model UserVoiceCredential {
   user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   provider    String
   secretId    String
+  /// The user opted into live calls for this connection (only providers that can talk live).
+  liveCalls   Boolean                @default(false)
   createdAt   DateTime               @default(now())
   updatedAt   DateTime               @updatedAt
   preferences SpaceVoicePreference[]

@@ -11417,3 +11417,11 @@ msgstr "Votre fournisseur vocal a refusé la clé."
 #: apps/web/src/components/vault/VaultItemEditor.tsx
 msgid "ZIP or postal code"
 msgstr "Code postal"
+
+#: apps/web/src/pages/VoiceSettingsOverlay.tsx
+msgid "Live calls"
+msgstr "Appels en direct"
+
+#: apps/web/src/pages/VoiceSettingsOverlay.tsx
+msgid "Talk naturally and interrupt anytime; the bot still does the real work. Billed by the minute by the provider. Applies when you connect."
+msgstr "Parlez naturellement et coupez la parole quand vous voulez ; le bot fait toujours le vrai travail. Facturé à la minute par le fournisseur. S’applique à la connexion."

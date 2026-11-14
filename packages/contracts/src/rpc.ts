@@ -1654,6 +1654,8 @@ export const appContract = {
             baseUrl: z.string().max(2048).optional(),
             ttsModel: z.string().max(200).optional(),
             sttModel: z.string().max(200).optional(),
+            /** Opt into live calls; ignored unless the provider and server allow them. */
+            liveCalls: z.boolean().optional(),
             /** Where the connection becomes the default voice. */
             scope: SettingsScopeSchema.optional(),
           })
