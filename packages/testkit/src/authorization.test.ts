@@ -480,6 +480,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["voice/voices", {}],
       ["voice/prepare", { text: "Nope" }],
       ["voice/setSpeechModel"],
+      ["voice/setLiveCalls", { provider: "openai", liveCalls: true }],
       ["analytics/screen"],
       ["aiConsent/status"],
       ["aiConsent/allow"],
