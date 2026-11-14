@@ -86,6 +86,10 @@ import type {
   TerminalRequest,
   TransactionalEmail,
   VoiceCapabilities,
+  VoiceConversationAttachRequest,
+  VoiceConversationLink,
+  VoiceConversationOpenRequest,
+  VoiceConversationSession,
   VoiceInfo,
   VoiceSynthesizeRequest,
   VoiceTranscribeRequest,
@@ -598,6 +602,16 @@ export interface VoiceProvider {
   ): Promise<VoiceInfo[]>;
   synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip>;
   transcribe?(request: VoiceTranscribeRequest, context: AdapterContext): Promise<{ text: string }>;
+  /** Starts a live conversation; present when `capabilities.conversation` is set. */
+  openConversation?(
+    request: VoiceConversationOpenRequest,
+    context: AdapterContext,
+  ): Promise<VoiceConversationSession>;
+  /** Joins a running conversation from the API to follow it and speak into it. */
+  attachConversation?(
+    request: VoiceConversationAttachRequest,
+    context: AdapterContext,
+  ): Promise<VoiceConversationLink>;
 }
 
 /**

@@ -36,6 +36,7 @@ export function CallLayout() {
       <IncomingCall
         bots={callsEnabled ? (bots ?? NO_BOTS) : NO_BOTS}
         transcribe={voiceStatus ? Boolean(voiceStatus.transcribe) : undefined}
+        conversation={Boolean(voiceStatus?.conversation)}
         onAnswered={(botId) => navigate(`/app/${botId}`)}
       />
     </div>

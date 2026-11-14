@@ -31,6 +31,7 @@ export const VOICE_CATALOG = [
     name: "OpenAI",
     description: "Simple TTS plus Whisper-class transcription. Reuse an OpenAI key.",
     transcribe: true,
+    conversation: true,
   },
   {
     id: "cartesia",

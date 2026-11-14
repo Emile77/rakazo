@@ -61,10 +61,12 @@ function startRingtone(): () => void {
 export function IncomingCall({
   bots,
   transcribe,
+  conversation,
   onAnswered,
 }: {
   bots: Bot[];
   transcribe?: boolean;
+  conversation?: boolean;
   onAnswered: (botId: string) => void;
 }) {
   const { t } = useLingui();
@@ -182,6 +184,7 @@ export function IncomingCall({
         botColor: bot.color,
         botAvatarSet: bot.avatarSet,
         transcribe,
+        conversation,
         answered: { callId: call.callId, opening: answered.opening },
       });
       onAnswered(bot.id);

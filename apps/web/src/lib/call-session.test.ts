@@ -11,6 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pickUp } from "./call-pickup.js";
 import { ECHO_GUARD_MS, endCall, getSnapshot, startCall, toggleMute } from "./call-session";
+import { startConversation } from "./conversation-call.js";
 import { dictation, usesServerDictation } from "./dictation.js";
 import { recheckSessionOnUnauthorized, rpc } from "./rpc.js";
 import { speaker } from "./tts.js";
@@ -49,11 +50,16 @@ vi.mock("./tts.js", () => ({
   },
 }));
 
+vi.mock("./conversation-call.js", () => ({
+  startConversation: vi.fn(),
+}));
+
 vi.mock("./rpc.js", () => ({
   recheckSessionOnUnauthorized: vi.fn(),
   rpc: {
     threads: {
       answer: vi.fn(),
+      updateCall: vi.fn(async () => ({ ok: true })),
       endCall: vi.fn(async () => ({ ok: true })),
       followUp: vi.fn(),
       get: vi.fn(),
@@ -1578,6 +1584,115 @@ function userMessageEvent(callId: string): ProductEvent {
     createdAt: "2026-09-20T00:00:00.000Z",
   } as ProductEvent;
 }
+
+describe("conversation call", () => {
+  const audio = { setMuted: vi.fn(), close: vi.fn() };
+  const updateCall = vi.mocked(rpc.threads.updateCall);
+  let live: Parameters<typeof startConversation>[0];
+
+  beforeEach(() => {
+    endCall();
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    isSpeaking.mockReturnValue(false);
+    getThread.mockResolvedValue(snapshot([]) as never);
+    send.mockResolvedValue({ runId: "run-1", taskId: "task-1" } as never);
+    endCallRpc.mockResolvedValue({ ok: true } as never);
+    vi.mocked(startConversation).mockImplementation(async (input) => {
+      live = input;
+      return audio;
+    });
+  });
+
+  afterEach(() => {
+    endCall();
+    vi.useRealTimers();
+  });
+
+  it("talks live instead of dictating, and hands a request to the bot as a call turn", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+
+    expect(startConversation).toHaveBeenCalledOnce();
+    expect(listen).not.toHaveBeenCalled();
+    expect(getSnapshot()?.phase).toBe("listening");
+
+    live.onEvent({ type: "caption", role: "user", text: "How much disk" });
+    live.onEvent({ type: "caption", role: "user", text: " is left?" });
+    live.onEvent({ type: "caption", role: "bot", text: "Checking." });
+    expect(getSnapshot()?.exchanges).toEqual([
+      { role: "user", text: "How much disk is left?" },
+      { role: "bot", text: "Checking." },
+    ]);
+
+    getThread.mockResolvedValue(snapshot([botMessage("message-1", "1.5 TB free")]) as never);
+    live.onEvent({ type: "handoff", handoffId: "d1", text: "How much disk is left?" });
+    await flushMicrotasks();
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: "call-bot", text: "How much disk is left?" }),
+    );
+    expect(callIdFromClientNonce(send.mock.calls[0]?.[0].clientNonce)).toBeTruthy();
+    expect(updateCall).toHaveBeenCalledWith({
+      botId: "call-bot",
+      callId: expect.any(String),
+      say: { text: "1.5 TB free", handoffId: "d1" },
+    });
+    expect(speak).not.toHaveBeenCalled();
+  });
+
+  it("follows the voice's audio for the phase and mutes the microphone track", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+    live.onSpeaking(true);
+    expect(getSnapshot()?.phase).toBe("speaking");
+    live.onSpeaking(false);
+    expect(getSnapshot()?.phase).toBe("listening");
+
+    toggleMute();
+    expect(audio.setMuted).toHaveBeenLastCalledWith(true);
+    expect(listen).not.toHaveBeenCalled();
+  });
+
+  it("holds the caller's audio while the bot waits on a code typed on screen", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+    getThread.mockResolvedValue(
+      snapshot([askMessage("ask-1", { kind: "ask", input: "secret", prompt: "Code" })], {
+        id: "run-1",
+        status: "waiting_input",
+      } as ThreadSnapshot["run"]) as never,
+    );
+    live.onEvent({ type: "handoff", handoffId: "d1", text: "Log in to the bank." });
+    await flushMicrotasks();
+
+    expect(audio.setMuted).toHaveBeenLastCalledWith(true);
+    expect(updateCall).toHaveBeenCalledWith(expect.objectContaining({ listening: false }));
+  });
+
+  it("takes turns when the live conversation cannot connect", async () => {
+    vi.mocked(startConversation).mockRejectedValue(new Error("no live voice"));
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+
+    expect(listen).toHaveBeenCalledOnce();
+    expect(getSnapshot()?.phase).toBe("listening");
+  });
+
+  it("hangs up when the API loses the conversation", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+    live.onLost(new Error("gone"));
+    expect(getSnapshot()).toBeNull();
+    expect(endCallRpc).toHaveBeenCalled();
+  });
+
+  it("hangs up after the voice says the bot's farewell", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+    getThread.mockResolvedValue(snapshot([botMessage("message-1", "Bye")]) as never);
+    live.onEvent({ type: "handoff", handoffId: "d1", text: "bye, that's all" });
+    await flushMicrotasks();
+    expect(getSnapshot()).not.toBeNull();
+    live.onSpeaking(true);
+    live.onSpeaking(false);
+    expect(getSnapshot()).toBeNull();
+  });
+});
 
 function snapshot(messages: ThreadMessage[], run: ThreadSnapshot["run"] = null): ThreadSnapshot {
   return {

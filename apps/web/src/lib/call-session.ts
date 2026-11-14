@@ -1,5 +1,11 @@
 import { t } from "@lingui/core/macro";
-import type { BotAvatarSet, ProductEvent, ThreadMessage, ThreadSnapshot } from "@rakazo/contracts";
+import type {
+  BotAvatarSet,
+  ConversationCallEvent,
+  ProductEvent,
+  ThreadMessage,
+  ThreadSnapshot,
+} from "@rakazo/contracts";
 import type { CallExchange } from "@rakazo/core";
 import {
   CALL_FAREWELL_TIMEOUT_MS,
@@ -25,6 +31,8 @@ import {
 import { getGlobalBroadcastChannel } from "better-auth/client";
 import { useSyncExternalStore } from "react";
 import { pickUp } from "./call-pickup.js";
+import type { ConversationAudio } from "./conversation-call.js";
+import { startConversation } from "./conversation-call.js";
 import { dictation, usesServerDictation } from "./dictation.js";
 import {
   newLogoAvatarActivitySource,
@@ -115,6 +123,23 @@ let awaitingReply = false;
 let approvalRunId: string | null = null;
 let awaitedRunId: string | null = null;
 const finishedRunIds = new Set<string>();
+/** The caller's voice may hold a live conversation instead of taking turns. */
+let conversable = false;
+/**
+ * Set while the call talks live: the voice converses on its own and hands requests here as
+ * turns, and replies go back to it to say instead of to the speaker.
+ */
+let conversation: {
+  controller: AbortController;
+  audio: ConversationAudio | null;
+  /** The handoff the turn in flight answers, so the voice ties the reply to it. */
+  handoffId?: string;
+  speaking: boolean;
+  /** Hang up once the voice has finished saying the last reply or goodbye. */
+  hangUpAfterSpeech: boolean;
+  /** The voice was holding the caller's audio for a code typed on screen. */
+  holdingAudio: boolean;
+} | null = null;
 /** Counting down an interim phrase heard over the reply, before it counts as cutting in. */
 const interim = createInterimBargeIn(() => {
   if (state?.phase !== "speaking") return;
@@ -156,6 +181,8 @@ export function startCall(call: {
   botColor?: string;
   botAvatarSet?: BotAvatarSet;
   transcribe?: boolean;
+  /** The voice can hold a live conversation; the call falls back to turns if it cannot connect. */
+  conversation?: boolean;
   /** The bot called and the user picked up: no ringing, and the bot speaks first. */
   answered?: { callId: string; opening: string };
 }): void {
@@ -164,6 +191,7 @@ export function startCall(call: {
   prepareCallAudio();
   callId = call.answered?.callId ?? newClientId();
   transcribe = call.transcribe;
+  conversable = Boolean(call.conversation);
   spokenMemory.clear();
   interim.clear();
   micOpen = false;
@@ -229,6 +257,10 @@ export function startCall(call: {
   void pickUp(ringing.signal, { ring: !call.answered }).then(() => {
     if (ringing.signal.aborted || !state || callId !== ringingCallId) return;
     pickup = null;
+    if (conversable) {
+      void converse(call.botId, opening);
+      return;
+    }
     if (!opening) {
       set({ phase: "listening", connectedAt: Date.now() });
       void listen();
@@ -248,6 +280,120 @@ export function startCall(call: {
       void listen();
     });
   });
+}
+
+/** Talks live when the voice can; any failure to connect falls back to taking turns. */
+async function converse(botId: string, opening: string) {
+  if (!state) return;
+  const controller = new AbortController();
+  const live: NonNullable<typeof conversation> = {
+    controller,
+    audio: null,
+    speaking: false,
+    hangUpAfterSpeech: false,
+    holdingAudio: false,
+  };
+  conversation = live;
+  const connectingCallId = callId;
+  set({
+    phase: "listening",
+    connectedAt: Date.now(),
+    ...(opening ? { exchanges: [{ role: "bot" as const, text: opening }] } : {}),
+  });
+  try {
+    const audio = await startConversation({
+      botId,
+      callId,
+      signal: controller.signal,
+      onEvent: (event) => {
+        if (conversation === live) hearConversation(event);
+      },
+      onSpeaking: (speaking) => {
+        if (conversation === live) conversationSpeaking(speaking);
+      },
+      onLost: (error) => {
+        if (conversation !== live || !state) return;
+        reportClientError(error, "voice.conversation");
+        set({ caption: errorText(error, t`The call dropped`) });
+        endCall();
+      },
+    });
+    if (conversation !== live || callId !== connectingCallId || !state) {
+      audio.close();
+      return;
+    }
+    live.audio = audio;
+    audio.setMuted(state.muted);
+    if (opening) sayInCall(opening);
+    reactToThread();
+  } catch (error) {
+    if (conversation !== live || callId !== connectingCallId || !state) return;
+    conversation = null;
+    controller.abort();
+    // The voice cannot talk live right now; this call takes turns instead.
+    if (errorStatus(error) !== 412) reportClientError(error, "voice.conversation");
+    if (!opening) {
+      void listen();
+      return;
+    }
+    set({ phase: "thinking" });
+    spokenMemory.remember(opening);
+    openingPending = true;
+    void speaker.speak(opening, { botId }).catch(() => {
+      if (callId !== connectingCallId) return;
+      openingPending = false;
+      void listen();
+    });
+  }
+}
+
+/** Captions extend the transcript line by line; a handoff is the caller's turn. */
+function hearConversation(event: ConversationCallEvent) {
+  if (!state) return;
+  if (event.type === "ended") {
+    endCall();
+    return;
+  }
+  if (event.type === "handoff") {
+    if (conversation) conversation.handoffId = event.handoffId;
+    void handleTranscript(event.text);
+    return;
+  }
+  const exchanges = [...state.exchanges];
+  const last = exchanges.at(-1);
+  if (last?.role === event.role)
+    exchanges[exchanges.length - 1] = { ...last, text: last.text + event.text };
+  else exchanges.push({ role: event.role, text: event.text.trimStart() });
+  const line = exchanges.at(-1)?.text ?? "";
+  set(event.role === "user" ? { exchanges, heard: line } : { exchanges, caption: line });
+}
+
+function conversationSpeaking(speaking: boolean) {
+  if (!state || !conversation) return;
+  conversation.speaking = speaking;
+  if (!speaking && conversation.hangUpAfterSpeech) {
+    endCall();
+    return;
+  }
+  set({ phase: speaking ? "speaking" : awaitingReply ? "thinking" : "listening" });
+}
+
+/** Gives the live voice something to say; it words it itself, in the caller's language. */
+function sayInCall(text: string, handoffId?: string) {
+  if (!state) return;
+  void rpc.threads
+    .updateCall({ botId: state.botId, callId, say: { text, ...(handoffId ? { handoffId } : {}) } })
+    .catch((error) => reportClientError(error, "voice.conversation"));
+}
+
+/** Holds the caller's audio while the bot waits on a code typed on screen. */
+function holdConversationAudio(hold: boolean) {
+  if (!state || !conversation || conversation.holdingAudio === hold) return;
+  conversation.holdingAudio = hold;
+  conversation.audio?.setMuted(hold || state.muted);
+  void rpc.threads
+    .updateCall({ botId: state.botId, callId, listening: !hold })
+    .catch((error) => reportClientError(error, "voice.conversation"));
 }
 
 export function prepareCallAudio(): void {
@@ -283,6 +429,8 @@ function dropCall(): void {
   pickup?.abort();
   pickup = null;
   openingPending = false;
+  conversation?.controller.abort();
+  conversation = null;
   feed?.controller.abort();
   feed = null;
   hangUpAfterReply = false;
@@ -408,6 +556,10 @@ export function toggleMute(): void {
   if (!state) return;
   const muted = !state.muted;
   set({ muted });
+  if (conversation) {
+    conversation.audio?.setMuted(muted || conversation.holdingAudio);
+    return;
+  }
   if (muted) {
     dictation.stop("cancel");
     micOpen = false;
@@ -514,6 +666,11 @@ function speakFarewell(payload: Record<string, unknown>) {
     return;
   }
   awaitingReply = false;
+  if (conversation) {
+    conversation.hangUpAfterSpeech = true;
+    sayInCall(farewell);
+    return;
+  }
   set({ exchanges: [...state.exchanges, { role: "bot", text: farewell }], heard: "" });
   spokenMemory.remember(farewell);
   void speaker.speak(farewell, { botId: state.botId, messageId });
@@ -557,7 +714,16 @@ async function listen() {
   if (!state) return;
   // The caller said goodbye: every path back to listening hangs up instead.
   if (hangUpAfterReply) {
+    if (conversation) {
+      conversation.hangUpAfterSpeech = true;
+      return;
+    }
     endCall();
+    return;
+  }
+  // The live voice listens on its own; only the phase follows the turn.
+  if (conversation) {
+    set({ phase: conversation.speaking ? "speaking" : "listening" });
     return;
   }
   // A reply still playing owns the audio session; its idle event calls back here.
@@ -600,7 +766,7 @@ async function handleTranscript(text: string) {
     void listen();
     return;
   }
-  if (state.phase === "speaking") {
+  if (!conversation && state.phase === "speaking") {
     if (!isCallBargeIn(text)) {
       set({ heard: "" });
       void openMic();
@@ -613,14 +779,17 @@ async function handleTranscript(text: string) {
   }
   dictation.stop("submit");
   // The microphone caught the reply, not the caller: drop it and keep listening.
-  if (spokenMemory.isEcho(text)) {
+  if (!conversation && spokenMemory.isEcho(text)) {
     set({ heard: "" });
     void listen();
     return;
   }
   const turn = callTurn(thread, text);
+  // Captured now: the reply to this turn is said against the handoff that asked for it.
+  const handoffId = conversation?.handoffId;
   if (turn.kind === "enter_code") {
-    set({ heard: "", caption: t`Hang up, then enter the code on screen.` });
+    if (conversation) sayInCall(t`The code is entered on screen, never said aloud.`, handoffId);
+    else set({ heard: "", caption: t`Hang up, then enter the code on screen.` });
     return;
   }
   const { botId, exchanges } = state;
@@ -636,14 +805,19 @@ async function handleTranscript(text: string) {
     approvalRunId = turn.runId;
     awaitingReply = true;
     if (closing) hangUpAfterReply = true;
-    set({ heard: "", caption: t`Approve or deny it on screen.` });
+    if (conversation) sayInCall(t`Approve or deny it on screen.`, handoffId);
+    else set({ heard: "", caption: t`Approve or deny it on screen.` });
     void listen();
     return;
   }
   approvalRunId = null;
   awaitedRunId = turn.kind === "answer" ? turn.runId : null;
   awaitingReply = true;
-  set({ heard: text, phase: "thinking", exchanges: [...exchanges, { role: "user", text }] });
+  set(
+    conversation
+      ? { phase: conversation.speaking ? "speaking" : "thinking" }
+      : { heard: text, phase: "thinking", exchanges: [...exchanges, { role: "user", text }] },
+  );
   if (closing) {
     hangUpAfterReply = true;
     // A second goodbye replaces this timer. Clear the previous one or it can
@@ -674,6 +848,7 @@ async function handleTranscript(text: string) {
     if (!state || state.botId !== botId || callId !== turnCallId) return;
     awaitingReply = false;
     set({ caption: errorText(error, t`Could not send that`) });
+    if (conversation) sayInCall(errorText(error, t`Could not send that`), handoffId);
     void listen();
     return;
   } finally {
@@ -710,7 +885,8 @@ function reactToThread() {
   if (!state || state.phase === "ringing" || openingPending) return;
   // The bot already said goodbye: neither its marker nor the work it files after it is spoken.
   if (botEndedCall) return;
-  if (pendingCallSecretAsk(thread)) {
+  if (conversation) holdConversationAudio(pendingCallSecretAsk(thread));
+  else if (pendingCallSecretAsk(thread)) {
     dictation.stop("cancel");
     micOpen = false;
     set({ heard: "" });
@@ -743,18 +919,27 @@ function reactToThread() {
       // its run writes next.
       approvalRunId = approvalAsk ? (lastBot.runId ?? null) : null;
       awaitingReply = approvalRunId !== null;
+      // A live call keeps going while the code is typed; a turn-taking call must hang up first.
+      const codeHint = conversation
+        ? t`The code is entered on screen, never said aloud.`
+        : t`Hang up first, then enter the code on screen.`;
+      const spoken = secretAsk
+        ? `${text}. ${codeHint}`
+        : approvalAsk
+          ? `${text}. ${t`Approve or deny it on screen.`}`
+          : ask
+            ? `${text}. ${t`Say yes or no, or answer in a sentence.`}`
+            : text;
+      if (conversation) {
+        sayInCall(spoken, conversation.handoffId);
+        conversation.handoffId = undefined;
+        if (hangUpAfterReply) conversation.hangUpAfterSpeech = true;
+        set({ phase: conversation.speaking ? "speaking" : "listening" });
+        return;
+      }
       set({ exchanges: [...state.exchanges, { role: "bot", text }], heard: "" });
       spokenMemory.remember(text);
-      void speaker.speak(
-        secretAsk
-          ? `${text}. ${t`Hang up first, then enter the code on screen.`}`
-          : approvalAsk
-            ? `${text}. ${t`Approve or deny it on screen.`}`
-            : ask
-              ? `${text}. ${t`Say yes or no, or answer in a sentence.`}`
-              : text,
-        { botId, messageId: lastBot.id },
-      );
+      void speaker.speak(spoken, { botId, messageId: lastBot.id });
       return;
     }
     if (!runActive(thread)) {

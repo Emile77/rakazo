@@ -247,6 +247,7 @@ function SpaceShell() {
       botColor: bot.color,
       botAvatarSet: bot.avatarSet,
       transcribe: voiceStatus ? Boolean(voiceStatus.transcribe) : undefined,
+      conversation: Boolean(voiceStatus?.conversation),
     });
   };
   const voiceStatus: VoiceStatus | null =
@@ -1232,6 +1233,7 @@ function SpaceShell() {
       <IncomingCall
         bots={bootstrapMe?.phoneCallsEnabled ? bots : []}
         transcribe={voiceStatus ? Boolean(voiceStatus.transcribe) : undefined}
+        conversation={Boolean(voiceStatus?.conversation)}
         onAnswered={(botId) => navigate(`/app/${botId}`)}
       />
 

@@ -838,6 +838,11 @@ export interface VoiceCapabilities {
   transcribe: boolean;
   /** The provider can filter its listed voices by language. */
   languages?: boolean;
+  /**
+   * The provider can hold a live two-way conversation that hands real work back to the bot
+   * (`openConversation` and `attachConversation`).
+   */
+  conversation?: boolean;
 }
 
 export interface VoiceVerifyResult {
@@ -869,6 +874,61 @@ export interface VoiceTranscribeRequest {
    * one language into lookalike words of another.
    */
   language?: string;
+  signal?: AbortSignal;
+}
+
+/** Opens a live conversation whose audio flows between the caller's device and the provider. */
+export interface VoiceConversationOpenRequest {
+  apiKey: string;
+  voiceId: string;
+  /** How the talker speaks and when it hands work back. */
+  instructions: string;
+  /** Recent thread history the talker starts from, oldest first. */
+  history: VoiceConversationLine[];
+  /** The caller's WebRTC session description offer. */
+  offerSdp: string;
+  signal?: AbortSignal;
+}
+
+export interface VoiceConversationLine {
+  role: "user" | "bot";
+  text: string;
+}
+
+export interface VoiceConversationSession {
+  /** Opaque provider session id; only the API keeps it. */
+  sessionId: string;
+  /** The WebRTC session description answer for the caller's device. */
+  answerSdp: string;
+}
+
+/**
+ * What the API hears from a live conversation. Transcripts arrive as fragments; a `handoff`
+ * carries no text, so the API rebuilds the request from the caller's transcript.
+ */
+export type VoiceConversationEvent =
+  | { type: "started" }
+  | { type: "transcript"; role: "user" | "bot"; delta: string }
+  | { type: "handoff"; handoffId: string }
+  | { type: "usage"; seconds: number }
+  | { type: "ended"; reason: "closed" | "failed" };
+
+/** The API's side channel into a running conversation. */
+export interface VoiceConversationLink {
+  readonly events: AsyncIterable<VoiceConversationEvent>;
+  /** Something the talker should say in its own words; tie it to the handoff it answers. */
+  say(text: string, handoffId?: string): void;
+  /** Quiet context the talker keeps in mind without speaking it. */
+  note(text: string, handoffId?: string): void;
+  /** Mutes or unmutes the caller's audio, for example while a secret is typed on screen. */
+  setListening(listening: boolean): void;
+  /** Ends the conversation and resolves once the provider has closed it. */
+  close(): Promise<void>;
+}
+
+export interface VoiceConversationAttachRequest {
+  apiKey: string;
+  sessionId: string;
   signal?: AbortSignal;
 }
 

@@ -1333,6 +1333,8 @@ export const VoiceCatalogEntrySchema = z.object({
   modelConnection: z.boolean().optional(),
   /** The provider can list its voices for one language, so the picker may offer a filter. */
   languages: z.boolean().optional(),
+  /** Calls can hold a live two-way conversation that hands work to the bot. */
+  conversation: z.boolean().optional(),
 });
 export type VoiceCatalogEntry = z.infer<typeof VoiceCatalogEntrySchema>;
 
@@ -1364,10 +1366,26 @@ export const VoiceStatusSchema = z.object({
   configured: z.boolean(),
   ready: z.boolean(),
   transcribe: z.boolean(),
+  /** Calls talk live and hand work to the bot instead of taking turns. */
+  conversation: z.boolean().optional(),
   provider: z.string().nullable(),
   voiceId: z.string(),
 });
 export type VoiceStatus = z.infer<typeof VoiceStatusSchema>;
+
+/** What a conversation call's client hears from the API while the call runs. */
+export const ConversationCallEventSchema = z.discriminatedUnion("type", [
+  /** A fragment of what the caller or the voice said. */
+  z.object({ type: z.literal("caption"), role: z.enum(["user", "bot"]), text: z.string() }),
+  /** The voice handed the caller's request to the bot; `handoffId` ties the reply to it. */
+  z.object({
+    type: z.literal("handoff"),
+    handoffId: z.string().optional(),
+    text: z.string(),
+  }),
+  z.object({ type: z.literal("ended") }),
+]);
+export type ConversationCallEvent = z.infer<typeof ConversationCallEventSchema>;
 
 export const DeploymentSettingsSchema = z.object({
   ownerUserId: Id.nullable(),

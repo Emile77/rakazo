@@ -3,6 +3,10 @@ import type {
   AdapterDescriptor,
   SpeechClip,
   VoiceCapabilities,
+  VoiceConversationAttachRequest,
+  VoiceConversationLink,
+  VoiceConversationOpenRequest,
+  VoiceConversationSession,
   VoiceInfo,
   VoiceProvider,
   VoiceSynthesizeRequest,
@@ -46,7 +50,7 @@ export class OpenAIVoiceProvider implements VoiceProvider {
       id: "openai",
       contractVersion: "1",
       adapterVersion: "0.1.0",
-      capabilities: { catalog: true, synthesize: true, transcribe: true },
+      capabilities: { catalog: true, synthesize: true, transcribe: true, conversation: true },
     };
   }
 
@@ -81,6 +85,22 @@ export class OpenAIVoiceProvider implements VoiceProvider {
     });
     await requireOk(res, "OpenAI", "speaking");
     return { bytes: await readVoiceAudio(res, signal), mimeType: "audio/mpeg" };
+  }
+
+  async openConversation(
+    request: VoiceConversationOpenRequest,
+    context: AdapterContext,
+  ): Promise<VoiceConversationSession> {
+    const { openOpenAIConversation } = await import("./openai-voice-conversation.js");
+    return openOpenAIConversation(request, context);
+  }
+
+  async attachConversation(
+    request: VoiceConversationAttachRequest,
+    context: AdapterContext,
+  ): Promise<VoiceConversationLink> {
+    const { attachOpenAIConversation } = await import("./openai-voice-conversation.js");
+    return attachOpenAIConversation(request, context);
   }
 
   async transcribe(

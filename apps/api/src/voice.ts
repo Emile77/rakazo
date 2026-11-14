@@ -112,6 +112,7 @@ export function toVoiceStatus(cred: { provider: string; voiceId: string } | null
     configured: Boolean(cred),
     ready: Boolean(cred?.voiceId),
     transcribe: Boolean(entry?.transcribe && cred),
+    conversation: Boolean(entry && "conversation" in entry && entry.conversation && cred?.voiceId),
     provider: cred?.provider ?? null,
     voiceId: cred?.voiceId ?? "",
   };

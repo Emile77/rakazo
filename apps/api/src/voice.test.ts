@@ -35,9 +35,16 @@ describe("toVoiceStatus", () => {
       configured: true,
       ready: false,
       transcribe: true,
+      conversation: false,
       provider: "elevenlabs",
       voiceId: "",
     });
+  });
+
+  it("offers live conversation only for a chosen voice whose provider holds one", () => {
+    expect(toVoiceStatus({ provider: "openai", voiceId: "cedar" }).conversation).toBe(true);
+    expect(toVoiceStatus({ provider: "openai", voiceId: "" }).conversation).toBe(false);
+    expect(toVoiceStatus({ provider: "elevenlabs", voiceId: "rachel" }).conversation).toBe(false);
   });
 
   it("is ready once a voice is chosen", () => {
@@ -50,6 +57,7 @@ describe("toVoiceStatus", () => {
       configured: false,
       ready: false,
       transcribe: false,
+      conversation: false,
       provider: null,
       voiceId: "",
     });

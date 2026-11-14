@@ -26,6 +26,7 @@ import {
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { answerComputerRequest } from "../computer-control.js";
+import { createConversationCalls } from "../conversation-calls.js";
 import type { RouterDeps } from "../router.js";
 import { createRoutineTestRun, routineTestRunNonce, routineTestTarget } from "../routines.js";
 import { assertTeachingSendAllowed } from "../taught-skills.js";
@@ -100,6 +101,7 @@ export function takeoverReleaser(deps: RouterDeps, actor: Actor, target: ThreadT
 
 export function threadsRoutes(ctx: RouterContext) {
   const { deps, authed, callsEnabled, codexCatalog, repos, agentSkills } = ctx;
+  const conversations = createConversationCalls(deps);
   /** The bot a reaction can wake: the thread's bot, or in a group the bot that wrote the message. */
   const reactedBotId = async (target: ThreadTarget, messageId: string) =>
     target.kind === "bot"
@@ -469,6 +471,32 @@ export function threadsRoutes(ctx: RouterContext) {
         }
         return { ok: true as const };
       }),
+      connectCall: callsEnabled.threads.connectCall.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        return conversations.connect(context.actor, {
+          botId: target.botId,
+          threadId: target.threadId,
+          callId: input.callId,
+          offerSdp: input.offerSdp,
+        });
+      }),
+      callEvents: callsEnabled.threads.callEvents.handler(async function* ({ context, input }) {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        yield* conversations.events(
+          context.actor,
+          { botId: target.botId, callId: input.callId },
+          context.signal,
+        );
+      }),
+      updateCall: callsEnabled.threads.updateCall.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        conversations.update(context.actor, { ...input, botId: target.botId });
+        return { ok: true as const };
+      }),
       answerCall: callsEnabled.threads.answerCall.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         if (target.kind !== "bot") throw new IsolationError();
@@ -500,6 +528,7 @@ export function threadsRoutes(ctx: RouterContext) {
         if (target.kind !== "bot") throw new IsolationError();
         await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
         const { botId, threadId } = target;
+        await conversations.end(context.actor, input.callId);
         // The bot's own call: its card keeps how long the user stayed on.
         await settleCallRequest(deps, {
           threadId,
