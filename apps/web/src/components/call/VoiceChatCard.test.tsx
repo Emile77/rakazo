@@ -53,6 +53,40 @@ describe("VoiceChatCard", () => {
     return container;
   }
 
+  it("labels the caller, the live voice and the bot when the voice model spoke", () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const live: VoiceChatGroup = {
+      kind: "voiceChat",
+      key: "call:call-2",
+      callId: "call-2",
+      messages: [
+        { id: "u", role: "user", callId: "call-2", blocks: [{ kind: "text", text: "Hi" }] },
+        { id: "v", role: "bot", callId: "call-2", blocks: [{ kind: "text", text: "Hello" }] },
+        { id: "b", role: "bot", runId: "run-1", blocks: [{ kind: "text", text: "Done." }] },
+      ],
+    };
+    act(() => {
+      root?.render(<VoiceChatCard group={live} revealMessageId="u" botName="Chief" />);
+    });
+    const speakers = Array.from(container.querySelectorAll("[data-speaker]")).map((line) => [
+      line.getAttribute("data-speaker"),
+      line.querySelector("span")?.textContent,
+    ]);
+    expect(speakers).toEqual([
+      ["user", "You"],
+      ["voice", "Voice"],
+      ["bot", "Chief"],
+    ]);
+  });
+
+  it("shows no speaker labels on a turn-by-turn call", () => {
+    const card = render("user-1");
+    expect(card.querySelector("[data-speaker] span")).toBeNull();
+  });
+
   it("stays collapsed until a jump targets a message inside it", () => {
     const collapsed = render();
     expect(collapsed.querySelector("[data-message-id]")).toBeNull();

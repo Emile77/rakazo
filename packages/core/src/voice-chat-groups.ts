@@ -24,6 +24,18 @@ export type VoiceChatGroup<T extends VoiceChatMessage = VoiceChatMessage> = {
   /** The `voice_call` message the bot left when it hung up; it closes the group. */
   marker?: T;
 };
+/** Who said a card line: the caller, the live voice model, or the bot answering in the thread. */
+export type VoiceChatSpeaker = "user" | "voice" | "bot";
+
+/**
+ * A spoken line the live voice model wrote carries the call's nonce and no run; the
+ * bot's own replies come from a run. Turn-by-turn calls have no voice lines.
+ */
+export function voiceChatSpeaker(message: VoiceChatMessage): VoiceChatSpeaker {
+  if (message.role === "user") return "user";
+  return message.callId && !message.runId ? "voice" : "bot";
+}
+
 export type ThreadItem<T extends VoiceChatMessage = VoiceChatMessage> =
   | { kind: "message"; message: T }
   | VoiceChatGroup<T>;
@@ -36,13 +48,35 @@ const SUMMARY_MAX = 120;
  * group. Anything else ends the run — a typed user message breaks the group
  * even when it reuses the run of a call turn. The bot's `voice_call` marker
  * closes the group, so the work it does after hanging up renders as chat.
+ *
+ * A reply that lands after the hang-up still joins its card when it answers a spoken
+ * turn: the caller may hang up while the bot is still working on a question. The run
+ * that wrote the marker is excluded (its later work is wrap-up), and so is a run a
+ * typed message reused after the hang-up.
  */
 export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): ThreadItem<T>[] {
   const items: ThreadItem<T>[] = [];
   let open: VoiceChatGroup<T> | undefined;
   let openRunIds = new Set<string>();
   const segments = new Map<string, number>();
+  /** Spoken-turn runs of cards a marker closed, mapped to the card a late reply joins. */
+  const lateRuns = new Map<string, VoiceChatGroup<T>>();
+  const closeWithMarker = (group: VoiceChatGroup<T>, marker: T, runIds: Set<string>) => {
+    group.marker = marker;
+    for (const runId of runIds) {
+      if (runId !== marker.runId) lateRuns.set(runId, group);
+    }
+  };
   for (const message of messages) {
+    if (message.runId && !message.callId) {
+      const late = lateRuns.get(message.runId);
+      if (late && message.role === "bot") {
+        // Keep the marker last: it is the card's closing line.
+        late.messages.splice(late.messages.length - 1, 0, message);
+        continue;
+      }
+      if (late) lateRuns.delete(message.runId);
+    }
     if (open) {
       const joinsByRun = Boolean(
         message.role === "bot" && message.runId && openRunIds.has(message.runId),
@@ -50,7 +84,7 @@ export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): Thre
       if (message.callId === open.callId || joinsByRun) {
         open.messages.push(message);
         if (isCallMarker(message)) {
-          open.marker = message;
+          closeWithMarker(open, message, openRunIds);
           open = undefined;
           continue;
         }
@@ -79,7 +113,7 @@ export function groupVoiceChats<T extends VoiceChatMessage>(messages: T[]): Thre
       );
       items.push(open);
       if (isCallMarker(message)) {
-        open.marker = message;
+        closeWithMarker(open, message, openRunIds);
         open = undefined;
       }
       continue;
