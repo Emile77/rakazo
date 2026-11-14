@@ -145,6 +145,7 @@ function withVoicePreference<
       userId: string;
       provider: string;
       secretId: string;
+      liveCalls: boolean;
       createdAt: Date;
       updatedAt: Date;
     };
@@ -155,6 +156,7 @@ function withVoicePreference<
 >(preference: T) {
   return {
     ...preference.credential,
+    liveCalls: preference.credential.liveCalls,
     isDefault: preference.isDefault,
     voiceId: preference.voiceId,
     speechModel: preference.speechModel ?? "",
