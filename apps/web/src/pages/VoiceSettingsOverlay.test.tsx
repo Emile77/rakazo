@@ -15,6 +15,7 @@ const voice = vi.hoisted(() => ({
   disconnect: vi.fn(),
   setVoice: vi.fn(),
   setSpeechModel: vi.fn(),
+  setLiveCalls: vi.fn(),
 }));
 
 const { speak, activeCall } = vi.hoisted(() => ({
@@ -42,6 +43,20 @@ vi.mock("@rakazo/ui-web", () => {
       size: _size,
       ...props
     }: ComponentProps<"button"> & { variant?: string; size?: string }) => <button {...props} />,
+    Checkbox: ({
+      checked,
+      onCheckedChange,
+      ...props
+    }: Omit<ComponentProps<"input">, "onChange"> & {
+      onCheckedChange?: (checked: boolean) => void;
+    }) => (
+      <input
+        type="checkbox"
+        checked={Boolean(checked)}
+        onChange={(event) => onCheckedChange?.(event.currentTarget.checked)}
+        {...props}
+      />
+    ),
     Dialog: Container,
     DialogClose: Container,
     DialogContent: Container,
@@ -1402,6 +1417,92 @@ it("applies the voice a reconnect saved when the read after it fails", async () 
     expect(voice.connect).toHaveBeenLastCalledWith(
       expect.objectContaining({ voiceId: "voice_new", baseUrl: "https://speech-c.example/v1" }),
     );
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("turns live calls on and off for a connected OpenAI voice without a new key", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const openai = {
+    id: "cred-openai",
+    provider: "openai",
+    hasKey: true,
+    isDefault: true,
+    voiceId: "marin",
+    speechModel: "",
+    transcribe: true,
+    liveCalls: false,
+  };
+  voice.catalog.mockResolvedValue([
+    { id: "openai", name: "OpenAI", description: "", transcribe: true, conversation: true },
+    { id: "elevenlabs", name: "ElevenLabs", description: "", transcribe: true },
+  ]);
+  voice.credentials.mockResolvedValue([openai, eleven]);
+  voice.status.mockResolvedValue({
+    configured: true,
+    ready: true,
+    transcribe: true,
+    provider: "openai",
+    voiceId: "marin",
+  });
+  voice.voices.mockImplementation(async ({ provider }: { provider?: string }) =>
+    provider === "elevenlabs"
+      ? [{ id: "rachel", label: "Rachel" }]
+      : [{ id: "marin", label: "Marin" }],
+  );
+  voice.setLiveCalls
+    .mockReset()
+    .mockImplementation(async ({ liveCalls }: { liveCalls: boolean }) => ({
+      ...openai,
+      liveCalls,
+    }));
+  voice.connect.mockReset();
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const box = () =>
+    container.querySelector<HTMLInputElement>('input[type="checkbox"]') ?? undefined;
+  try {
+    await act(async () => {
+      root.render(
+        withQueries(<VoiceSettingsOverlay embedded scope="account" onClose={() => undefined} />),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const checkbox = box();
+    if (!checkbox) throw new Error("Missing live calls checkbox");
+    expect(checkbox.checked).toBe(false);
+
+    await act(async () => {
+      checkbox.click();
+    });
+    expect(voice.setLiveCalls).toHaveBeenLastCalledWith({ provider: "openai", liveCalls: true });
+    expect(box()?.checked).toBe(true);
+
+    await act(async () => {
+      box()?.click();
+    });
+    expect(voice.setLiveCalls).toHaveBeenLastCalledWith({ provider: "openai", liveCalls: false });
+    expect(box()?.checked).toBe(false);
+    expect(voice.connect).not.toHaveBeenCalled();
+
+    await act(async () => {
+      const select = container.querySelector("select");
+      if (!select) throw new Error("Missing provider select");
+      select.value = "elevenlabs";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(box()).toBeUndefined();
   } finally {
     await act(async () => root.unmount());
     container.remove();

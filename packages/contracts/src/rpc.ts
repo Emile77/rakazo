@@ -1678,6 +1678,9 @@ export const appContract = {
         }),
       )
       .output(VoiceStatusSchema),
+    setLiveCalls: oc
+      .input(z.object({ provider: z.string().min(1), liveCalls: z.boolean() }))
+      .output(VoiceCredentialSchema),
     setSpeechModel: oc
       .input(
         settingsScopeInput.extend({

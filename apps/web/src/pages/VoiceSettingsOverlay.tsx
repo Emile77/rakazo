@@ -353,6 +353,33 @@ export function VoiceSettingsOverlay({
     }
   }
 
+  async function saveLiveCalls(next: boolean) {
+    setLiveCalls(next);
+    // Before a key is connected, the box is sent with the connect.
+    if (!credential || credential.provider !== selected?.id) return;
+    setError(null);
+    markPending("voice");
+    try {
+      const saved = await rpc.voice.setLiveCalls({ provider: selected.id, liveCalls: next });
+      setLiveCalls(saved.liveCalls);
+      const update = (current: VoiceCredential[]) =>
+        current.map((entry) =>
+          entry.id === saved.id ? { ...entry, liveCalls: saved.liveCalls } : entry,
+        );
+      setCredentials(update);
+      queryClient.setQueryData(queries.voice.credentials.queryKey(scoped), (current) =>
+        current ? update(current) : current,
+      );
+      // Calls read live support from the voice status.
+      await queryClient.invalidateQueries({ queryKey: queries.voice.status.queryKey(scoped) });
+    } catch (err) {
+      setLiveCalls(!next);
+      setError(errorText(err, t`Could not save live calls`));
+    } finally {
+      markPending(null);
+    }
+  }
+
   async function saveSpeechModel() {
     if (!credential || !selected?.speechModel) return;
     const next = speechModel.trim();
@@ -501,7 +528,7 @@ export function VoiceSettingsOverlay({
                     className="mt-0.5"
                     checked={liveCalls}
                     disabled={busy}
-                    onCheckedChange={(checked) => setLiveCalls(checked === true)}
+                    onCheckedChange={(checked) => void saveLiveCalls(checked === true)}
                   />
                   <label htmlFor={liveCallsId} className="min-w-0 flex-1 text-body">
                     <span className="font-medium text-foreground">
@@ -510,7 +537,7 @@ export function VoiceSettingsOverlay({
                     <span className="mt-0.5 block text-muted-foreground">
                       <Trans>
                         Talk naturally and interrupt anytime; the bot still does the real work.
-                        Billed by the minute by the provider. Applies when you connect.
+                        Billed by the minute by the provider.
                       </Trans>
                     </span>
                   </label>

@@ -587,6 +587,30 @@ export async function disconnectVoiceCredential(
   return { ok: true as const };
 }
 
+/** Turns live calls on or off for a connection that can talk live, without a new key. */
+export async function updateVoiceLiveCalls(
+  deps: VoiceDeps,
+  actor: Actor,
+  input: { provider: string; liveCalls: boolean },
+): Promise<VoiceCredential> {
+  const entry = voiceCatalogEntry(input.provider);
+  if (!entry || !("conversation" in entry) || !entry.conversation) {
+    throw new ORPCError("BAD_REQUEST", { message: "This voice provider has no live calls." });
+  }
+  const found = await deps.prisma.userVoiceCredential.findFirst({
+    where: { userId: actor.userId, provider: input.provider },
+    orderBy: newestVoiceCredentialOrder,
+  });
+  if (!found) {
+    throw new ORPCError("BAD_REQUEST", { message: "Connect a voice provider first." });
+  }
+  const saved = await deps.prisma.userVoiceCredential.update({
+    where: { id: found.id },
+    data: { liveCalls: input.liveCalls },
+  });
+  return toVoiceCredential({ ...saved, isDefault: false, voiceId: "" });
+}
+
 export async function updateVoiceSpeechModel(
   deps: VoiceDeps,
   actor: Actor,

@@ -21,6 +21,7 @@ import {
   toVoiceCredential,
   toVoiceStatus,
   transcribeInboundVoice,
+  updateVoiceLiveCalls,
   updateVoiceSpeechModel,
   voiceChoicesChanged,
   voiceCredentialHasKey,
@@ -44,9 +45,9 @@ describe("toVoiceStatus", () => {
   it("offers live conversation only for a chosen voice whose provider holds one", () => {
     const on = { liveCalls: true };
     const opted = { liveCalls: true };
-    expect(
-      toVoiceStatus({ provider: "openai", voiceId: "cedar", ...opted }, on).conversation,
-    ).toBe(true);
+    expect(toVoiceStatus({ provider: "openai", voiceId: "cedar", ...opted }, on).conversation).toBe(
+      true,
+    );
     expect(toVoiceStatus({ provider: "openai", voiceId: "", ...opted }, on).conversation).toBe(
       false,
     );
@@ -1513,5 +1514,51 @@ describe("linked voice failures", () => {
       message:
         "xAI didn't accept the Models connection for voice. Disconnect and paste an API key.",
     });
+  });
+});
+
+describe("updateVoiceLiveCalls", () => {
+  function liveDeps(found: { id: string; provider: string } | null) {
+    const prisma = {
+      userVoiceCredential: {
+        findFirst: vi.fn().mockResolvedValue(found),
+        update: vi.fn().mockImplementation(async ({ data }: { data: { liveCalls: boolean } }) => ({
+          ...found,
+          userId: actor.userId,
+          secretId: "secret-1",
+          liveCalls: data.liveCalls,
+        })),
+      },
+    };
+    return { deps: { prisma } as unknown as VoiceDeps, prisma };
+  }
+
+  it("turns live calls on and off without touching the key", async () => {
+    const { deps, prisma } = liveDeps({ id: "cred-openai", provider: "openai" });
+    await expect(
+      updateVoiceLiveCalls(deps, actor, { provider: "openai", liveCalls: true }),
+    ).resolves.toMatchObject({ provider: "openai", liveCalls: true });
+    expect(prisma.userVoiceCredential.update).toHaveBeenLastCalledWith({
+      where: { id: "cred-openai" },
+      data: { liveCalls: true },
+    });
+    await expect(
+      updateVoiceLiveCalls(deps, actor, { provider: "openai", liveCalls: false }),
+    ).resolves.toMatchObject({ liveCalls: false });
+  });
+
+  it("refuses a provider that cannot talk live", async () => {
+    const { deps, prisma } = liveDeps({ id: "cred-eleven", provider: "elevenlabs" });
+    await expect(
+      updateVoiceLiveCalls(deps, actor, { provider: "elevenlabs", liveCalls: true }),
+    ).rejects.toThrow("no live calls");
+    expect(prisma.userVoiceCredential.update).not.toHaveBeenCalled();
+  });
+
+  it("asks for a connection first", async () => {
+    const { deps } = liveDeps(null);
+    await expect(
+      updateVoiceLiveCalls(deps, actor, { provider: "openai", liveCalls: true }),
+    ).rejects.toThrow("Connect a voice provider first.");
   });
 });
