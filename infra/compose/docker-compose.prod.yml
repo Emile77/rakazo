@@ -532,6 +532,7 @@ services:
       RAKAZO_NAV_LINKS:
       RAKAZO_ADMIN_EMAILS:
       VOICE_SUMMARY_MIN_CHARS:
+      VOICE_LIVE_CALLS:
     expose:
       - "3100"
     volumes:

@@ -74,7 +74,7 @@ export function callMarkerClientNonce(callId: string): string {
 
 /** The card is closed by a marker; the run that follows finishes whatever the call left open. */
 const HANG_UP_PROMPT =
-  "The voice call just ended because the user hung up. First call end_call with a short title for the call (leave farewell empty). Then, if anything the user asked for during the call is still unfinished, complete it now as a normal chat reply with full formatting. If nothing is pending, reply with one short sentence.";
+  "The voice call just ended because the user hung up. First call end_call with a short title for the call (leave farewell empty). Then, if anything the user asked for during the call is still unfinished, complete it now as a normal chat reply with full formatting. If nothing is pending, reply with one short sentence. If the call brought up something worth remembering, keep it as you normally would.";
 
 /** A send with routines that already has runs saved under its nonce. */
 class SavedSubmission extends Error {}

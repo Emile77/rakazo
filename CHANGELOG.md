@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Self-hosted servers can turn on live calls with `VOICE_LIVE_CALLS=true`: with an OpenAI voice, a call talks in real time and hands real work to the bot, then says its answer. The call's small talk stays in the chat so the bot remembers it ([live calls](docs/self-host-models.md#live-calls)).
+
 ## [0.11.0] - 2026-11-12
 
 ### Security

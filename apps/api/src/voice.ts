@@ -53,8 +53,8 @@ import type { SpeechSummarizer } from "./speech-summary.js";
 export interface VoiceDeps {
   prisma: PrismaClient;
   secrets: SecretStore;
-  /** The instance flag (`MCP_ALLOW_PRIVATE_ENDPOINT`). */
-  env?: { mcpAllowPrivateEndpoint?: boolean };
+  /** The instance flags (`MCP_ALLOW_PRIVATE_ENDPOINT`, `VOICE_LIVE_CALLS`). */
+  env?: { mcpAllowPrivateEndpoint?: boolean; voiceLiveCalls?: boolean };
   /** Set only when `VOICE_SUMMARY_MIN_CHARS` turns spoken summaries on. */
   speechSummary?: { summarize: SpeechSummarizer; minChars: number };
 }
@@ -106,13 +106,23 @@ export function catalogEntry(provider: string) {
   return voiceCatalogEntry(provider);
 }
 
-export function toVoiceStatus(cred: { provider: string; voiceId: string } | null): VoiceStatus {
+/** Live calls are off unless the deployment sets `VOICE_LIVE_CALLS=true`: they bill by the minute. */
+export function voiceLiveCallsEnabled(deps: Pick<VoiceDeps, "env">): boolean {
+  return deps.env?.voiceLiveCalls === true;
+}
+
+export function toVoiceStatus(
+  cred: { provider: string; voiceId: string } | null,
+  options: { liveCalls?: boolean } = {},
+): VoiceStatus {
   const entry = cred ? catalogEntry(cred.provider) : undefined;
   return {
     configured: Boolean(cred),
     ready: Boolean(cred?.voiceId),
     transcribe: Boolean(entry?.transcribe && cred),
-    conversation: Boolean(entry && "conversation" in entry && entry.conversation && cred?.voiceId),
+    conversation: Boolean(
+      options.liveCalls && entry && "conversation" in entry && entry.conversation && cred?.voiceId,
+    ),
     provider: cred?.provider ?? null,
     voiceId: cred?.voiceId ?? "",
   };

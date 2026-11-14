@@ -71,39 +71,85 @@ export function conversationResult(reply: string): string {
 }
 
 /**
- * The call's transcript as the API hears it: fragments joined into lines, and the requests
- * each handoff stands for.
+ * What a heard line is for. `talk` is the voice and the caller chatting; the other parts
+ * belong to a handoff, which the bot's own call turn already keeps in the chat.
+ */
+type HeardPart = "talk" | "request" | "ack" | "relay";
+type HeardLine = CallExchange & { part: HeardPart };
+
+/**
+ * The call's transcript as the API hears it: fragments joined into lines, the requests
+ * each handoff stands for, and the small talk the chat should keep.
  */
 export function createConversationTranscript() {
-  const lines: CallExchange[] = [];
+  const lines: HeardLine[] = [];
   /** Index of the first line a new handoff may claim. */
   let claimedTo = 0;
+  /** Lines before this were already given to the chat as small talk, or left out of it. */
+  let keptTo = 0;
+  /** What the talker's next line will be, when a handoff or a result already decided it. */
+  let nextBotPart: "ack" | "relay" | null = null;
   return {
     hear(role: CallExchange["role"], delta: string) {
       const last = lines.at(-1);
-      if (last?.role === role) last.text += delta;
-      else lines.push({ role, text: delta });
+      // A result the talker relays is a new line, even right after its acknowledgement.
+      if (last?.role === role && !(role === "bot" && nextBotPart)) {
+        last.text += delta;
+        return;
+      }
+      let part: HeardPart = "talk";
+      if (role === "bot" && nextBotPart) {
+        part = nextBotPart;
+        nextBotPart = null;
+      }
+      lines.push({ role, text: delta, part });
     },
-    /** The user's words since the previous handoff; the newest user line when none are new. */
+    /**
+     * The user's words since the previous handoff, leaving out small talk the chat already
+     * kept; the newest user line when none are new.
+     */
     claimRequest(): string {
-      const fresh = lines
-        .slice(claimedTo)
-        .filter((line) => line.role === "user")
-        .map((line) => line.text.trim())
-        .filter(Boolean);
+      const from = Math.max(claimedTo, keptTo);
+      const fresh = lines.slice(from).filter((line) => line.role === "user");
+      for (const line of fresh) line.part = "request";
+      // The talker's acknowledgement belongs to the handoff: already said when the
+      // handoff came late, else its next line.
+      const last = lines.at(-1);
+      if (last?.role === "bot" && fresh.length > 0 && last.part === "talk") last.part = "ack";
+      else nextBotPart = "ack";
       claimedTo = lines.length;
-      if (fresh.length > 0) return fresh.join(" ");
+      const words = fresh.map((line) => line.text.trim()).filter(Boolean);
+      if (words.length > 0) return words.join(" ");
       return lines.findLast((line) => line.role === "user")?.text.trim() ?? "";
+    },
+    /** The talker is about to say the bot's result, which the bot's reply already holds. */
+    relaying() {
+      nextBotPart = "relay";
     },
     /** The talker promised work in its newest line and no handoff has claimed the request. */
     promisedWork(): boolean {
       const last = lines.at(-1);
-      if (last?.role !== "bot" || claimedTo >= lines.length) return false;
-      const asked = lines.slice(claimedTo).some((line) => line.role === "user" && line.text.trim());
+      const from = Math.max(claimedTo, keptTo);
+      if (last?.role !== "bot" || from >= lines.length) return false;
+      const asked = lines.slice(from).some((line) => line.role === "user" && line.text.trim());
       return asked && isWorkPromise(last.text);
     },
+    /**
+     * Small talk heard since the last call, for the chat to keep. The newest line may still
+     * be growing, so it waits unless the call is over.
+     */
+    takeSmallTalk(options: { final?: boolean } = {}): CallExchange[] {
+      const end = options.final ? lines.length : lines.length - 1;
+      if (end <= keptTo) return [];
+      const settled = lines.slice(keptTo, end);
+      keptTo = end;
+      return settled
+        .filter((line) => line.part === "talk")
+        .map((line) => ({ role: line.role, text: line.text.trim() }))
+        .filter((line) => line.text);
+    },
     lines(): CallExchange[] {
-      return lines.map((line) => ({ ...line, text: line.text.trim() }));
+      return lines.map((line) => ({ role: line.role, text: line.text.trim() }));
     },
   };
 }

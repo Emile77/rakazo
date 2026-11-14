@@ -58,6 +58,7 @@ import {
   voiceContext,
   voiceCredentialHasKey,
   voiceCredentialServer,
+  voiceLiveCallsEnabled,
   voiceProviderFor,
   withVoiceConnection,
 } from "../voice.js";
@@ -484,7 +485,7 @@ export function accountRoutes(ctx: RouterContext) {
       ),
       status: authed.voice.status.handler(async ({ context, input }) => {
         const cred = await findDefaultVoiceCredential(deps.prisma, context.actor, input?.scope);
-        return toVoiceStatus(cred);
+        return toVoiceStatus(cred, { liveCalls: voiceLiveCallsEnabled(deps) });
       }),
       credentials: authed.voice.credentials.handler(async ({ context, input }) => {
         const target = await voicePreferenceTarget(deps.prisma, context.actor, input?.scope);
@@ -547,7 +548,7 @@ export function accountRoutes(ctx: RouterContext) {
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
           ),
         );
-        return toVoiceStatus(cred);
+        return toVoiceStatus(cred, { liveCalls: voiceLiveCallsEnabled(deps) });
       }),
       setSpeechModel: authed.voice.setSpeechModel.handler(async ({ context, input }) =>
         updateVoiceSpeechModel(deps, context.actor, input),

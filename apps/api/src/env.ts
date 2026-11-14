@@ -90,6 +90,8 @@ export interface AppEnv {
   maxAttachmentsPerMessage: number;
   /** Bot replies longer than this are read aloud as a summary; unset reads every reply in full. */
   voiceSummaryMinChars: number | undefined;
+  /** Calls with a voice that can converse talk live and hand work to the bot (`VOICE_LIVE_CALLS`). */
+  voiceLiveCalls: boolean;
   sandboxSupervisorUrl: string;
   sandboxSupervisorToken: string | undefined;
   screenProxySecret: string;
@@ -296,6 +298,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     maxUploadSizeBytes: uploadSizeFromEnv(source),
     maxAttachmentsPerMessage: attachmentCountFromEnv(source),
     voiceSummaryMinChars: voiceSummaryMinCharsFromEnv(source.VOICE_SUMMARY_MIN_CHARS),
+    voiceLiveCalls: source.VOICE_LIVE_CALLS === "true",
     sandboxSupervisorUrl: source.SANDBOX_SUPERVISOR_URL ?? "http://127.0.0.1:7091",
     sandboxSupervisorToken:
       sandboxProvider === "docker" ? resolveSupervisorToken(source) : undefined,

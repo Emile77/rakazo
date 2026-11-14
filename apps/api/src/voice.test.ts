@@ -42,9 +42,16 @@ describe("toVoiceStatus", () => {
   });
 
   it("offers live conversation only for a chosen voice whose provider holds one", () => {
-    expect(toVoiceStatus({ provider: "openai", voiceId: "cedar" }).conversation).toBe(true);
-    expect(toVoiceStatus({ provider: "openai", voiceId: "" }).conversation).toBe(false);
-    expect(toVoiceStatus({ provider: "elevenlabs", voiceId: "rachel" }).conversation).toBe(false);
+    const on = { liveCalls: true };
+    expect(toVoiceStatus({ provider: "openai", voiceId: "cedar" }, on).conversation).toBe(true);
+    expect(toVoiceStatus({ provider: "openai", voiceId: "" }, on).conversation).toBe(false);
+    expect(toVoiceStatus({ provider: "elevenlabs", voiceId: "rachel" }, on).conversation).toBe(
+      false,
+    );
+  });
+
+  it("offers no live conversation unless the server turned live calls on", () => {
+    expect(toVoiceStatus({ provider: "openai", voiceId: "cedar" }).conversation).toBe(false);
   });
 
   it("is ready once a voice is chosen", () => {

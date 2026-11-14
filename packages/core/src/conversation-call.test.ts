@@ -69,6 +69,41 @@ describe("createConversationTranscript", () => {
     expect(transcript.promisedWork()).toBe(false);
   });
 
+  it("gives the chat only small talk, once, and keeps it out of later requests", () => {
+    const transcript = createConversationTranscript();
+    transcript.hear("user", "Salut!");
+    transcript.hear("bot", "Salut, ça va?");
+    transcript.hear("user", "Check");
+    expect(transcript.takeSmallTalk()).toEqual([
+      { role: "user", text: "Salut!" },
+      { role: "bot", text: "Salut, ça va?" },
+    ]);
+    expect(transcript.takeSmallTalk()).toEqual([]);
+    transcript.hear("user", " the disk.");
+    expect(transcript.claimRequest()).toBe("Check the disk.");
+    transcript.hear("bot", "Je regarde.");
+    transcript.relaying();
+    transcript.hear("bot", "Il reste 1,5 To.");
+    transcript.hear("user", "Hm?");
+    transcript.hear("bot", "Je disais: 1,5 To.");
+    transcript.hear("user", "Merci.");
+    transcript.hear("bot", "De rien.");
+    expect(transcript.takeSmallTalk({ final: true })).toEqual([
+      { role: "user", text: "Hm?" },
+      { role: "bot", text: "Je disais: 1,5 To." },
+      { role: "user", text: "Merci." },
+      { role: "bot", text: "De rien." },
+    ]);
+  });
+
+  it("counts a late handoff's spoken promise as its acknowledgement", () => {
+    const transcript = createConversationTranscript();
+    transcript.hear("user", "Check the backups.");
+    transcript.hear("bot", "OK, let me check.");
+    expect(transcript.claimRequest()).toBe("Check the backups.");
+    expect(transcript.takeSmallTalk({ final: true })).toEqual([]);
+  });
+
   it("does not take small talk for a promise", () => {
     const transcript = createConversationTranscript();
     transcript.hear("user", "Salut!");

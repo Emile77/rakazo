@@ -1,11 +1,35 @@
 import type { VoiceConversationEvent, VoiceConversationLink } from "@rakazo/adapter-kit";
 import type { Actor, ConversationCallEvent } from "@rakazo/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConversationCallDeps } from "./conversation-calls.js";
 import { createConversationCalls } from "./conversation-calls.js";
-import type { VoiceDeps } from "./voice.js";
 
 const voice = vi.hoisted(() => ({
   provider: null as unknown,
+}));
+
+const kept = vi.hoisted(() => ({
+  messages: [] as Array<{ role: string; text: string; clientNonce?: string; author?: unknown }>,
+}));
+
+vi.mock("@rakazo/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@rakazo/db")>()),
+  withTransactionRetry: (run: () => unknown) => run(),
+  loadMessageAuthor: vi.fn(async () => ({ id: "user", name: "Emile" })),
+  createThreadMessageInTransaction: vi.fn(
+    async (
+      _tx: unknown,
+      input: { role: string; blocks: Array<{ text: string }>; clientNonce?: string },
+    ) => {
+      kept.messages.push({
+        role: input.role,
+        text: input.blocks[0]?.text ?? "",
+        clientNonce: input.clientNonce,
+      });
+      return { id: `m${kept.messages.length}` };
+    },
+  ),
+  appendEventInTransaction: vi.fn(async () => ({ seq: kept.messages.length })),
 }));
 
 vi.mock("./voice.js", () => ({
@@ -16,6 +40,8 @@ vi.mock("./voice.js", () => ({
     linked: false,
   })),
   voiceProviderFor: vi.fn(async () => voice.provider),
+  voiceLiveCallsEnabled: (deps: { env?: { voiceLiveCalls?: boolean } }) =>
+    deps.env?.voiceLiveCalls === true,
   withVoiceConnection: (_provider: string, _linked: boolean, run: () => unknown) => run(),
   voiceContext: (_actor: unknown, signal?: AbortSignal) => ({
     operationId: "voice",
@@ -66,7 +92,8 @@ function fakeLink() {
   return { link, emit, said, listening };
 }
 
-function setup(capable = true) {
+function setup(capable = true, liveCalls = true) {
+  kept.messages = [];
   const fake = fakeLink();
   const openConversation = vi.fn(async () => ({ sessionId: "s1", answerSdp: "answer" }));
   voice.provider = {
@@ -75,6 +102,7 @@ function setup(capable = true) {
     attachConversation: vi.fn(async () => fake.link),
   };
   const prisma = {
+    $transaction: vi.fn(async (run: (tx: unknown) => unknown) => run({})),
     bot: { findFirst: vi.fn(async () => ({ name: "Ada", description: "Helps." })) },
     user: { findUnique: vi.fn(async () => ({ timezone: "America/Toronto" })) },
     message: {
@@ -84,8 +112,14 @@ function setup(capable = true) {
       ]),
     },
   };
-  const calls = createConversationCalls({ prisma, secrets: {} } as unknown as VoiceDeps);
-  return { calls, fake, openConversation };
+  const notify = vi.fn(async () => undefined);
+  const calls = createConversationCalls({
+    prisma,
+    secrets: {},
+    env: { voiceLiveCalls: liveCalls },
+    events: { notify },
+  } as unknown as ConversationCallDeps);
+  return { calls, fake, openConversation, notify };
 }
 
 const input = { botId: "bot", threadId: "thread", callId: "call1", offerSdp: "offer" };
@@ -115,6 +149,14 @@ describe("createConversationCalls", () => {
     ]);
     expect(request.offerSdp).toBe("offer");
     await calls.end(actor, "call1");
+  });
+
+  it("refuses when the server has not turned live calls on", async () => {
+    const { calls, openConversation } = setup(true, false);
+    await expect(calls.connect(actor, input)).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+    });
+    expect(openConversation).not.toHaveBeenCalled();
   });
 
   it("refuses a voice that cannot converse", async () => {
@@ -177,6 +219,37 @@ describe("createConversationCalls", () => {
     expect(() => calls.update(actor, { botId: "bot", callId: "call1", listening: true })).toThrow(
       "This call is no longer live.",
     );
+  });
+
+  it("keeps small talk in the call's card and leaves handoffs to the bot's turns", async () => {
+    const { calls, fake, notify } = setup();
+    await calls.connect(actor, input);
+    const events = calls.events(actor, { botId: "bot", callId: "call1" });
+    fake.emit({ type: "transcript", role: "user", delta: "Salut!" });
+    fake.emit({ type: "transcript", role: "bot", delta: "Salut, ça va?" });
+    fake.emit({ type: "transcript", role: "user", delta: "Combien d'espace reste-t-il?" });
+    fake.emit({ type: "handoff", handoffId: "d1" });
+    fake.emit({ type: "transcript", role: "bot", delta: "Je regarde." });
+    const heard = await take(events, 5);
+    expect(heard).toContainEqual({
+      type: "handoff",
+      handoffId: "d1",
+      text: "Combien d'espace reste-t-il?",
+    });
+    calls.update(actor, { botId: "bot", callId: "call1", say: { text: "1,5 To libres." } });
+    fake.emit({ type: "transcript", role: "bot", delta: "Il reste 1,5 To." });
+    fake.emit({ type: "transcript", role: "user", delta: "Merci!" });
+    fake.emit({ type: "transcript", role: "bot", delta: "De rien." });
+    await take(events, 3);
+    await calls.end(actor, "call1");
+    expect(kept.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: "user", text: "Salut!" },
+      { role: "bot", text: "Salut, ça va?" },
+      { role: "user", text: "Merci!" },
+      { role: "bot", text: "De rien." },
+    ]);
+    for (const message of kept.messages) expect(message.clientNonce).toMatch(/^call:call1:/);
+    expect(notify).toHaveBeenCalledWith("thread", expect.any(Number));
   });
 
   it("keeps one caller's call from another user", async () => {

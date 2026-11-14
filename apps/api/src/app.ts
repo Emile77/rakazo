@@ -827,6 +827,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
       gitSha: env.gitSha,
       integrationsCatalogUrl: env.integrationsCatalogUrl,
       mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
+      voiceLiveCalls: env.voiceLiveCalls,
       desktopHostChoiceEnabled: Boolean(env.desktopStackToken),
       computerSettingsEnabled: env.computerSettingsEnabled,
       mcpStdioEnabled: env.mcpStdioEnabled,

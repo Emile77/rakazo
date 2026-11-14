@@ -156,6 +156,8 @@ export interface RouterDeps {
     gitSha?: string;
     integrationsCatalogUrl?: string;
     mcpAllowPrivateEndpoint?: boolean;
+    /** Calls may talk live with a voice that can converse; off unless `VOICE_LIVE_CALLS=true`. */
+    voiceLiveCalls?: boolean;
     desktopHostChoiceEnabled?: boolean;
     computerSettingsEnabled?: boolean;
     mcpStdioEnabled?: boolean;

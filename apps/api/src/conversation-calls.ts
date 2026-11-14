@@ -1,20 +1,31 @@
 import { ORPCError } from "@orpc/server";
 import type { VoiceConversationLink } from "@rakazo/adapter-kit";
 import type { Actor, ConversationCallEvent, MessageBlock } from "@rakazo/contracts";
+import type { CallExchange } from "@rakazo/core";
 import {
   CONVERSATION_PROMISE_GRACE_MS,
+  callClientNonce,
   conversationCallInstructions,
   conversationHistory,
   conversationResult,
   createConversationTranscript,
   speechFromBlocks,
 } from "@rakazo/core";
-import { IsolationError } from "@rakazo/db";
+import type { ThreadEvents } from "@rakazo/db";
+import {
+  appendEventInTransaction,
+  createThreadMessageInTransaction,
+  IsolationError,
+  loadMessageAuthor,
+  THREAD_LOCK_TRANSACTION_OPTIONS,
+  withTransactionRetry,
+} from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import type { VoiceDeps } from "./voice.js";
 import {
   resolveVoiceTarget,
   voiceContext,
+  voiceLiveCallsEnabled,
   voiceProviderFor,
   withVoiceConnection,
 } from "./voice.js";
@@ -25,9 +36,17 @@ const HANDOFF_SETTLE_MS = 400;
 const MAX_CONVERSATION_MS = 2 * 60 * 60 * 1000;
 
 interface ConversationCall {
+  spaceId: string;
   userId: string;
   botId: string;
+  threadId: string;
+  callId: string;
   link: VoiceConversationLink;
+  transcript: ReturnType<typeof createConversationTranscript>;
+  /** Small talk already handed to the chat, written in order. */
+  kept: Promise<void>;
+  /** Settles once the side channel is done and its small talk is in the chat. */
+  followed: Promise<void>;
   /** Ends the provider link and every timer when the call closes. */
   controller: AbortController;
   /** Events not yet read by the call's client. */
@@ -42,7 +61,9 @@ interface ConversationCall {
  * turns each handoff into an ordinary call turn sent by the client, and gives the voice the
  * bot's replies to say.
  */
-export function createConversationCalls(deps: VoiceDeps) {
+export type ConversationCallDeps = VoiceDeps & { events: Pick<ThreadEvents, "notify"> };
+
+export function createConversationCalls(deps: ConversationCallDeps) {
   const calls = new Map<string, ConversationCall>();
   const keyOf = (actor: Pick<Actor, "userId">, callId: string) => `${actor.userId}:${callId}`;
 
@@ -69,9 +90,18 @@ export function createConversationCalls(deps: VoiceDeps) {
     if (calls.get(key) === call) calls.delete(key);
   };
 
+  /** Hands the small talk heard so far to the chat, after what it already holds. */
+  const keep = (call: ConversationCall, options: { final?: boolean } = {}) => {
+    const lines = call.transcript.takeSmallTalk(options);
+    if (lines.length === 0) return;
+    call.kept = call.kept
+      .then(() => keepSmallTalk(deps, call, lines))
+      .catch((error) => getLogger().error("conversation call small talk", error));
+  };
+
   /** Reads the provider's events until the conversation ends. */
   const follow = async (key: string, call: ConversationCall) => {
-    const transcript = createConversationTranscript();
+    const { transcript } = call;
     let settle: { handoffId: string; timer: ReturnType<typeof setTimeout> } | null = null;
     let promiseTimer: ReturnType<typeof setTimeout> | null = null;
     let seconds = 0;
@@ -91,6 +121,11 @@ export function createConversationCalls(deps: VoiceDeps) {
         if (event.type === "transcript") {
           // The voice's acknowledgement has started, so the request it answers is complete.
           if (event.role === "bot") releaseHandoff();
+          // The caller speaks again: what came before is settled, so the chat keeps its small talk.
+          if (event.role === "user" && transcript.lines().at(-1)?.role !== "user") {
+            releaseHandoff();
+            keep(call);
+          }
           transcript.hear(event.role, event.delta);
           push(call, { type: "caption", role: event.role, text: event.delta });
           if (event.role !== "bot") continue;
@@ -118,6 +153,8 @@ export function createConversationCalls(deps: VoiceDeps) {
       if (settle) clearTimeout(settle.timer);
       if (promiseTimer) clearTimeout(promiseTimer);
       getLogger().info("conversation call ended", { seconds });
+      keep(call, { final: true });
+      await call.kept;
       finish(key, call);
     }
   };
@@ -128,6 +165,11 @@ export function createConversationCalls(deps: VoiceDeps) {
       actor: Actor,
       input: { botId: string; threadId: string; callId: string; offerSdp: string },
     ) {
+      if (!voiceLiveCallsEnabled(deps)) {
+        throw new ORPCError("PRECONDITION_FAILED", {
+          message: "Live calls are off on this server.",
+        });
+      }
       const bot = await deps.prisma.bot.findFirst({
         where: { id: input.botId, spaceId: actor.spaceId },
         select: { name: true, description: true },
@@ -180,9 +222,15 @@ export function createConversationCalls(deps: VoiceDeps) {
         context,
       );
       const call: ConversationCall = {
+        spaceId: actor.spaceId,
         userId: actor.userId,
         botId: input.botId,
+        threadId: input.threadId,
+        callId: input.callId,
         link,
+        transcript: createConversationTranscript(),
+        kept: Promise.resolve(),
+        followed: Promise.resolve(),
         controller,
         backlog: [],
         wake: null,
@@ -191,7 +239,7 @@ export function createConversationCalls(deps: VoiceDeps) {
       calls.set(key, call);
       const deadline = setTimeout(() => void link.close(), MAX_CONVERSATION_MS);
       controller.signal.addEventListener("abort", () => clearTimeout(deadline), { once: true });
-      void follow(key, call);
+      call.followed = follow(key, call);
       return { answerSdp: session.answerSdp };
     },
 
@@ -215,15 +263,22 @@ export function createConversationCalls(deps: VoiceDeps) {
     ) {
       const call = own(actor, input.botId, input.callId);
       if (input.listening !== undefined) call.link.setListening(input.listening);
-      if (input.say) call.link.say(conversationResult(input.say.text), input.say.handoffId);
+      if (input.say) {
+        call.transcript.relaying();
+        call.link.say(conversationResult(input.say.text), input.say.handoffId);
+      }
     },
 
-    /** Closes the caller's conversation, if this process holds one. */
+    /**
+     * Closes the caller's conversation, if this process holds one, once its small talk is in
+     * the chat.
+     */
     async end(actor: Pick<Actor, "userId">, callId: string) {
       const key = keyOf(actor, callId);
       const call = calls.get(key);
       if (!call) return;
       await call.link.close().catch(() => undefined);
+      await call.followed;
       finish(key, call);
     },
   };
@@ -253,6 +308,53 @@ async function* readEvents(
   } finally {
     signal?.removeEventListener("abort", abandoned);
   }
+}
+
+/**
+ * Writes small talk into the call's card as call turns, so the bot reads it in its history
+ * and the hang-up turn sees the whole call. Neither side starts a run.
+ */
+async function keepSmallTalk(
+  deps: ConversationCallDeps,
+  call: ConversationCall,
+  lines: readonly CallExchange[],
+) {
+  const eventSeq = await withTransactionRetry(() =>
+    deps.prisma.$transaction(async (tx) => {
+      const author = await loadMessageAuthor(tx, call.userId);
+      let seq = 0;
+      for (const line of lines) {
+        const blocks: MessageBlock[] = [{ kind: "text", text: line.text }];
+        const message = await createThreadMessageInTransaction(tx, {
+          threadId: call.threadId,
+          role: line.role,
+          ...(line.role === "bot" ? { botId: call.botId } : { authorUserId: call.userId }),
+          blocks,
+          // The caller is on the call, reading its card.
+          markUnread: false,
+          clientNonce: callClientNonce(call.callId),
+        });
+        const event = await appendEventInTransaction(tx, {
+          spaceId: call.spaceId,
+          threadId: call.threadId,
+          botId: call.botId,
+          type: "thread.message.created",
+          payload: {
+            messageId: message.id,
+            role: line.role,
+            blocks,
+            ...(line.role === "user" ? { author } : {}),
+            callId: call.callId,
+          },
+        });
+        seq = event.seq;
+      }
+      return seq;
+    }, THREAD_LOCK_TRANSACTION_OPTIONS),
+  );
+  await deps.events.notify(call.threadId, eventSeq).catch((error) => {
+    getLogger().error("conversation call small talk realtime notification", error);
+  });
 }
 
 /** The thread's latest readable lines, which the voice starts from. */
