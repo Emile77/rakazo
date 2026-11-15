@@ -2349,12 +2349,12 @@ describe("own settings through update_bot", () => {
     expect(reflect).not.toHaveBeenCalled();
     expect(f.results[0]).toMatchObject({ error: expect.any(String) });
   });
-  it("keeps the model once outside content entered the run", async () => {
+  it("asks the owner before a model change once outside content entered the run", async () => {
     const f = fixture({ name: "update_bot", builtin: true });
     f.claimedOutsideSteering(true);
     f.setCalls([{ args: { thinkingLevel: "high" }, executionId: "call-1" }]);
     await f.run();
-    expect(f.results[0]).toMatchObject({ error: expect.stringContaining("outside content") });
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
     expect(f.prisma.bot.update).not.toHaveBeenCalled();
   });
   it("treats its own id in bot_id as its own settings", async () => {

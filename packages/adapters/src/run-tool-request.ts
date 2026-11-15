@@ -32,12 +32,7 @@ import {
   purchaseCardSummary,
 } from "./purchase-gate.js";
 import type { RunContext } from "./run-context.js";
-import {
-  isRunTainted,
-  neverAsks,
-  OWN_INSTRUCTIONS_BASELINE_UNKNOWN_ERROR,
-  refuseOwnerSettingsChange,
-} from "./run-context.js";
+import { isRunTainted, neverAsks, OWN_INSTRUCTIONS_BASELINE_UNKNOWN_ERROR } from "./run-context.js";
 import {
   approvalReplayEffectToolName,
   CATALOG_APPROVAL_TOOL,
@@ -80,6 +75,11 @@ export interface ToolRequest {
   fleetSummary: FleetCardSummary | undefined;
   /** Gated like a consequential action, even when the tool alone is not. */
   heldForApproval: boolean;
+  /**
+   * Only a person approves it, every time: a protection outside content tripped, so no rule
+   * or approval model may stand in for the owner.
+   */
+  personApproval: boolean;
   /** This page tool call completes a purchase, which a person approves each time. */
   purchase: PurchaseApproval | undefined;
   /** This page tool call types a saved card into a checkout, which a person approves each time. */
@@ -305,6 +305,7 @@ export async function resolveToolRequest(
     replayEffectToolName,
     fleetSummary: undefined,
     heldForApproval: false,
+    personApproval: false,
     purchase: undefined,
     cardUse: undefined,
     loginUse: undefined,
@@ -442,6 +443,20 @@ export async function prepareToolRequest(
     const refused = await holdSharedPageSave(ctx, request);
     if (refused) return refused;
     args = request.args;
+  }
+  // A settings change after outside content asks the owner on screen instead of being refused.
+  if (
+    (name === "update_preferences" || name === "claim_email_address") &&
+    nextApprovedTool !== name &&
+    !isSubagentToolExecution(executionId) &&
+    (name !== "update_preferences" ||
+      args.timezone !== undefined ||
+      args.marketingEmails !== undefined) &&
+    !(await neverAsks(ctx)) &&
+    (await isRunTainted(ctx))
+  ) {
+    request.heldForApproval = true;
+    request.personApproval = true;
   }
   if (name === "update_bot" && !argumentGiven(args.bot_id)) {
     const refused = await prepareOwnBotUpdate(ctx, request);
@@ -694,11 +709,11 @@ async function prepareOwnBotUpdate(
         "owner_only_model_settings",
         "Only the owner can change your model, thinking, voice or read-aloud, from their own chat.",
       );
-    if (!unguarded && (await isRunTainted(ctx)))
-      return refuseOwnerSettingsChange(
-        ctx,
-        "Model, thinking, voice and read-aloud changes are blocked for the rest of this run because it read outside content.",
-      );
+    // After outside content only the owner, on screen, approves the change.
+    if (!unguarded && (await isRunTainted(ctx))) {
+      request.heldForApproval = true;
+      request.personApproval = true;
+    }
   }
   if (!argumentGiven(args.instructions)) return undefined;
   if (isSubagentToolExecution(executionId))

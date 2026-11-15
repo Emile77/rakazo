@@ -297,11 +297,16 @@ export async function gateToolCall(
   const gated = requiresApprovalByDefault || connectorReadGated;
   // These ask in every run, whatever started it.
   const mandatoryInAnyRun =
-    paying || unattendedWatch || scheduleNamesNewSite || toolRequiresExplicitApproval(name);
+    paying ||
+    unattendedWatch ||
+    scheduleNamesNewSite ||
+    request.personApproval ||
+    toolRequiresExplicitApproval(name);
   // No allow rule skips these, and without them the tool needs no approval, so "Always allow"
   // on their card would save a rule that never takes effect.
   const asksEveryTime =
-    (unattendedWatch || scheduleNamesNewSite) && !toolRequiresApproval(name, viaConnector);
+    request.personApproval ||
+    ((unattendedWatch || scheduleNamesNewSite) && !toolRequiresApproval(name, viaConnector));
   // Never ask runs everything else: only another owner's connection could have been steered into it.
   const guardedInNeverAsk = name === "respond_agent_connection";
   const resolvedRules = resolveActionApprovalForTools({

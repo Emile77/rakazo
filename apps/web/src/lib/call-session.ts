@@ -62,6 +62,16 @@ export interface CallState {
   caption: string;
   heard: string;
   exchanges: CallExchange[];
+  /** An approval the called bot waits on, answered from the call itself. */
+  approval: CallApproval | null;
+}
+
+/** What a protection asks the caller to approve, shown with Approve and Deny in the call. */
+export interface CallApproval {
+  runId: string;
+  messageId: string;
+  title: string;
+  detail?: string;
 }
 
 const RUN_ACTIVE = ["running", "queued", "leased"];
@@ -217,6 +227,7 @@ export function startCall(call: {
     caption: "",
     heard: "",
     exchanges: [],
+    approval: null,
   };
   unsubSpeech = speaker.subscribe((speech) => {
     if (!state || state.phase === "ringing") return;
@@ -714,8 +725,58 @@ function commit(next: ThreadSnapshot | null) {
     else finishedRunIds.add(run.id);
   }
   thread = next;
+  syncCallApproval();
   reactToThread();
   return next;
+}
+
+/** The called bot's latest unanswered approval, if its run still waits on it. */
+function pendingApproval(): CallApproval | null {
+  for (const message of [...(thread?.messages ?? [])].reverse()) {
+    if (message.role !== "bot" || !message.runId) continue;
+    const block = message.blocks.find(
+      (candidate) =>
+        candidate.kind === "ask" &&
+        candidate.status !== "answered" &&
+        isApprovalAskBlock(candidate),
+    );
+    if (block?.kind !== "ask") continue;
+    if (finishedRunIds.has(message.runId)) return null;
+    return {
+      runId: message.runId,
+      messageId: message.id,
+      title: block.text,
+      ...(block.detail ? { detail: block.detail } : {}),
+    };
+  }
+  return null;
+}
+
+function syncCallApproval() {
+  if (!state) return;
+  const next = pendingApproval();
+  if (next?.messageId === state.approval?.messageId) return;
+  // A card the caller cannot see is no approval: bring the call back into view.
+  set(next ? { approval: next, minimized: false } : { approval: null });
+}
+
+/** Approve or deny, from the call, what the bot is waiting on. */
+export async function answerCallApproval(decision: "allow" | "deny"): Promise<void> {
+  const approval = state?.approval;
+  if (!state || !approval) return;
+  const { botId } = state;
+  set({ approval: null });
+  try {
+    await rpc.threads.answer({
+      botId,
+      runId: approval.runId,
+      messageId: approval.messageId,
+      answer: decision,
+    });
+  } catch (error) {
+    if (state?.botId !== botId) return;
+    set({ approval, caption: errorText(error, t`Could not send that`) });
+  }
 }
 
 /** The tail of playback reaches the microphone after the audio element ends. */

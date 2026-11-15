@@ -60,23 +60,13 @@ function ownBotUpdateCall() {
 }
 
 describe("prepareToolRequest: update_bot owner settings after outside content", () => {
-  it("refuses once, then ends the turn instead of repeating the refusal", async () => {
+  it("holds the change for the owner on screen instead of refusing it", async () => {
     const { ctx, request } = ownBotUpdateCall();
-    await expect(prepareToolRequest(ctx as never, request())).resolves.toEqual({
-      error: expect.stringContaining("outside content"),
-    });
-    const repeat = await prepareToolRequest(ctx as never, request());
-    expect(repeat).toMatchObject({
-      kind: "agent_tool_result",
-      terminate: true,
-      content: [
-        {
-          type: "text",
-          text: expect.stringContaining("Settings"),
-        },
-      ],
-    });
-    expect(JSON.stringify(repeat)).not.toContain("outside content");
+    for (let index = 0; index < 2; index += 1) {
+      const held = request();
+      await expect(prepareToolRequest(ctx as never, held)).resolves.toBeUndefined();
+      expect(held).toMatchObject({ heldForApproval: true, personApproval: true });
+    }
   });
 
   it("keeps preparing the change while the run is untainted", async () => {

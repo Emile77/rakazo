@@ -426,7 +426,7 @@ describe("replaying an earlier reply's tool steps", () => {
       content: [
         {
           type: "text",
-          text: '{"stdout":"","stderr":"","code":0}\n[shell is not available to you now.]',
+          text: '{"stdout":"","stderr":"","code":0}\n[shell is not loaded right now. If find_tool lists it, load it again before calling it.]',
         },
       ],
     });
@@ -562,7 +562,7 @@ describe("replaying an earlier reply's tool steps", () => {
       content: [
         {
           type: "text",
-          text: "observed\n[the screenshot you took:]\n[computer_observe is not available to you now.]",
+          text: "observed\n[the screenshot you took:]\n[computer_observe is not loaded right now. If find_tool lists it, load it again before calling it.]",
         },
         { type: "image" },
       ],

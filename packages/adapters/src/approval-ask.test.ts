@@ -2,6 +2,24 @@ import { describe, expect, it } from "vitest";
 import { approvalDetailLength, buildApprovalAskBlock } from "./approval-ask.js";
 
 describe("buildApprovalAskBlock", () => {
+  it("says in plain words which setting a held change sets, with no Always allow", () => {
+    const block = buildApprovalAskBlock("effect-1", "update_bot", { voice: "ash" }, [], {
+      onceOnly: true,
+    });
+    expect(block).toMatchObject({
+      text: "Change voice → ash?",
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
+
+  it("names a memory write instead of the tool", () => {
+    const block = buildApprovalAskBlock("effect-1", "remember", { content: "Likes tea" }, []);
+    expect(block).toMatchObject({ text: "Save this to memory?" });
+  });
+
   it("binds the approval to its effect and redacts secrets", () => {
     const block = buildApprovalAskBlock(
       "effect-1",

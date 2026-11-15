@@ -240,7 +240,7 @@ function replayedToolReply(
                 seen
                   ? (stored.result ?? "").replace(IMAGE_NOT_KEPT, "[the screenshot you took:]")
                   : result.text
-              }${offered.has(name) ? "" : `\n[${name} is not available to you now.]`}`,
+              }${offered.has(name) ? "" : `\n[${name} is not loaded right now. If find_tool lists it, load it again before calling it.]`}`,
             },
             ...(seen ? [screenshot] : []),
           ],

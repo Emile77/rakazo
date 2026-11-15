@@ -249,42 +249,42 @@ describe("dispatchTool audit outcomes", () => {
     });
   });
 
-  it("ends the turn on a repeated update_bot owner-settings refusal", async () => {
+  it("holds an update_bot owner-settings change after outside content for the owner, not refused", async () => {
     const ctx = dispatchContext(true);
-    const first = await applyTool(ctx as never, "update_bot", { model: "test-model" }, "call-1");
-    expect(first).toEqual({ error: expect.stringContaining("outside content") });
-    const repeat = await applyTool(ctx as never, "update_bot", { model: "test-model" }, "call-2");
-    expect(repeat).toMatchObject({
-      kind: "agent_tool_result",
-      terminate: true,
-      details: { refused: "owner-settings" },
-      content: [{ type: "text", text: expect.stringContaining("fresh chat") }],
+    vi.mocked(gateToolCall).mockClear();
+    vi.mocked(gateToolCall).mockResolvedValueOnce({ result: { paused: true } } as never);
+    const result = await applyTool(ctx as never, "update_bot", { voice: "ash" }, "call-1");
+    expect(result).toEqual({ paused: true });
+    expect(vi.mocked(gateToolCall).mock.calls[0]![1]).toMatchObject({
+      heldForApproval: true,
+      personApproval: true,
     });
-    // The refusal returns before the gate records an effect, so it writes no audit row;
-    // the refusal marker itself is audited as a failure wherever a refused call is audited.
-    expect(audited).toEqual([]);
   });
 
-  it("records the shared refusal a repeated update_bot change triggers as a failure", async () => {
+  it("holds an account preference change after outside content for the owner", async () => {
     const ctx = dispatchContext(true);
-    const refused = await applyTool(ctx as never, "update_bot", { model: "test-model" }, "call-1");
-    expect(refused).toEqual({ error: expect.stringContaining("outside content") });
-    // The refusal state is shared per run, so the next owner-settings change ends the turn
-    // through update_preferences, whose audited call must record the refusal as a failure.
-    const repeat = await applyTool(
-      ctx as never,
-      "update_preferences",
-      { marketingEmails: false },
-      "call-2",
-    );
-    expect(repeat).toMatchObject({ terminate: true, details: { refused: "owner-settings" } });
-    expect(audited).toEqual([
-      {
-        tool: "update_preferences",
-        outcome: "failure",
-        metadata: { effectId: "effect-update_preferences", autoApproved: false },
-      },
-    ]);
+    vi.mocked(gateToolCall).mockClear();
+    vi.mocked(gateToolCall).mockResolvedValueOnce({ result: { paused: true } } as never);
+    await applyTool(ctx as never, "update_preferences", { marketingEmails: false }, "call-1");
+    expect(vi.mocked(gateToolCall).mock.calls[0]![1]).toMatchObject({
+      heldForApproval: true,
+      personApproval: true,
+    });
+  });
+
+  it("asks for nothing on a clean run", async () => {
+    const base = dispatchContext(false);
+    const ctx = {
+      ...base,
+      deps: { ...base.deps, prisma: { ...base.deps.prisma, attempt: { count: async () => 1 } } },
+    };
+    vi.mocked(gateToolCall).mockClear();
+    vi.mocked(gateToolCall).mockResolvedValueOnce({ result: { paused: true } } as never);
+    await applyTool(ctx as never, "update_preferences", { marketingEmails: false }, "call-1");
+    expect(vi.mocked(gateToolCall).mock.calls[0]![1]).toMatchObject({
+      heldForApproval: false,
+      personApproval: false,
+    });
   });
 });
 
