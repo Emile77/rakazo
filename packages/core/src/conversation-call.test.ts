@@ -21,6 +21,8 @@ describe("conversationCallInstructions", () => {
     );
     expect(text).toContain("Generate by default.");
     expect(text).toContain("even if you think you know it");
+    expect(text).toContain("What you infer, guess or assume is not known.");
+    expect(text).toContain("If in doubt, generate.");
     expect(text).toContain("unless a result from the bot said so");
     expect(text).toContain("Never announce a result");
     expect(text).toContain("10:00");
