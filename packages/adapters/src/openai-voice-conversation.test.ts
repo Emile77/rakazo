@@ -5,6 +5,7 @@ import { OpenAIVoiceProvider } from "./openai-voice.js";
 import {
   attachConversationSocket,
   conversationEventFromWire,
+  conversationExcerpt,
   conversationVoice,
 } from "./openai-voice-conversation.js";
 
@@ -77,14 +78,33 @@ describe("openConversation", () => {
         model: "gpt-live-1",
         instructions: "Be brief.",
         input: [
-          { type: "message", role: "user", content: [{ type: "input_text", text: "Hi" }] },
-          { type: "message", role: "assistant", content: [{ type: "output_text", text: "Hello" }] },
+          {
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: conversationExcerpt([
+              { role: "user", text: "Hi" },
+              { role: "bot", text: "Hello" },
+            ]) }],
+          },
         ],
         audio: { output: { voice: "cedar" } },
         delegation: { type: "client", acknowledgement_delay_ms: 400 },
       },
       transport: { type: "webrtc", sdp: "offer" },
     });
+  });
+
+  it("gives the written chat as reference, never as lines the voice said", () => {
+    // The 2026-11-15 13:35 call: the voice read an old bot line as its own and said
+    // the greeting had been turned off, right after greeting.
+    const text = conversationExcerpt([
+      { role: "user", text: "Est-ce que la voix parle en premier ?" },
+      { role: "bot", text: "Chief dit que l'accueil n'est pas garanti a 100 %." },
+    ]);
+    expect(text).toContain("You did not say any of it in this call.");
+    expect(text).toContain("not a source of facts about this call");
+    expect(text).toContain("Bot: Chief dit");
+    expect(text).toContain("User: Est-ce que");
   });
 
   it("refuses a rejected key as an account error", async () => {

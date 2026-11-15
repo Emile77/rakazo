@@ -26,6 +26,14 @@ describe("conversationCallInstructions", () => {
     expect(text).toContain("unless a result from the bot said so");
     expect(text).toContain("Never announce a result");
     expect(text).toContain("10:00");
+    expect(text).not.toContain("you greeted the user");
+  });
+
+  it("tells the voice it greeted, and never to take call facts from the old chat", () => {
+    const text = conversationCallInstructions({ botName: "Ada", greeted: true });
+    expect(text).toContain("you spoke first. When it connected you greeted the user");
+    expect(text).toContain("not said by you in this call");
+    expect(text).toContain("Never state from it anything about this call");
   });
 });
 

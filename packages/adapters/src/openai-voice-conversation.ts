@@ -60,6 +60,16 @@ export function conversationVoice(voiceId: string): string {
   return CONVERSATION_VOICES.has(voiceId) ? voiceId : DEFAULT_CONVERSATION_VOICE;
 }
 
+/** The written chat before the call, as one reference block the talker does not own. */
+export function conversationExcerpt(
+  history: readonly { role: "user" | "bot"; text: string }[],
+): string {
+  return [
+    "Written chat from before this call, oldest first. It is an excerpt and may be outdated. You did not say any of it in this call. Use it only for the topic; it is not a source of facts about this call, the app, bots, settings or systems.",
+    ...history.map((line) => (line.role === "user" ? "User: " : "Bot: ") + line.text),
+  ].join("\n");
+}
+
 export async function openOpenAIConversation(
   request: VoiceConversationOpenRequest,
   context: AdapterContext,
@@ -75,19 +85,17 @@ export async function openOpenAIConversation(
         model: MODEL,
         instructions: request.instructions,
         input: [
-          ...request.history.map((line) =>
-            line.role === "user"
-              ? {
+          // The written chat is reference, not turns: as assistant turns the talker took the
+          // bots' old lines for its own knowledge and stated them as facts about the call.
+          ...(request.history.length
+            ? [
+                {
                   type: "message",
-                  role: "user",
-                  content: [{ type: "input_text", text: line.text }],
-                }
-              : {
-                  type: "message",
-                  role: "assistant",
-                  content: [{ type: "output_text", text: line.text }],
+                  role: "developer",
+                  content: [{ type: "input_text", text: conversationExcerpt(request.history) }],
                 },
-          ),
+              ]
+            : []),
           // The provider greets most reliably when the greeting is also in the startup input.
           ...(request.greeting
             ? [

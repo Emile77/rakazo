@@ -236,6 +236,7 @@ export function createConversationCalls(deps: ConversationCallDeps) {
               botName: bot.name,
               botDescription: bot.description,
               timeZone: user?.timezone,
+              greeted: input.greet !== false,
             }),
             history,
             ...(input.greet === false ? {} : { greeting: conversationGreeting(bot.name) }),

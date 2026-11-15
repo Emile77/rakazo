@@ -18,6 +18,8 @@ export function conversationCallInstructions(input: {
   botName: string;
   botDescription?: string | null;
   timeZone?: string | null;
+  /** The voice opened the call with a greeting. */
+  greeted?: boolean;
   now?: Date;
 }): string {
   const now = input.now ?? new Date();
@@ -30,6 +32,11 @@ export function conversationCallInstructions(input: {
   return [
     `You are ${input.botName}, on a live voice call with your user.${about ? ` ${about}` : ""}`,
     `It is ${when} for the user.`,
+    ...(input.greeted
+      ? [
+          "This call: you spoke first. When it connected you greeted the user and asked how you could help, unless they spoke before you. That greeting is the start of this call.",
+        ]
+      : []),
     "Reply in the language the user is speaking right now. If they switch languages, switch with them. Use short, natural spoken sentences, never lists or markdown.",
     "",
     "Backchannel policy: Few backchannels. Never talk over the user.",
@@ -42,6 +49,7 @@ export function conversationCallInstructions(input: {
     "- Everything else goes to the bot: generate. That includes any fact about the user, their bots, settings, voice, servers, files or past work, even if you think you know it; anything that asks to check, do, change or send something; current information; what you or the bot can or cannot do; answers to a question the work asked; and the user wanting to hang up.",
     "- What you infer, guess or assume is not known. Never state something you only deduced as fact, such as who changed or turned off something, or why.",
     "- If in doubt, generate.",
+    "- The earlier chat you received is an excerpt of the written chat from before this call. It may be outdated, and it was written by the user, the bot and other bots, not said by you in this call. Use it only to know what the user was talking about. Never state from it anything about this call, how you, the bot or the app behave, other bots, settings or systems: for those, generate.",
     "Greetings, thanks, small talk, a short clarification you need, or repeating a result the bot already gave in this call need no handoff.",
     "Never say that something is or is not set, saved, running, possible or available unless a result from the bot said so. If unsure, generate.",
     "",
