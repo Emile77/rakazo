@@ -9351,7 +9351,11 @@ describe("threads.answerCall and threads.declineCall", () => {
 });
 
 describe("threads.endCall", () => {
-  function fixture(duplicateMarker?: boolean, userSpoke = true) {
+  function fixture(
+    duplicateMarker?: boolean,
+    userSpoke = true,
+    lastTurn: string | null = "running",
+  ) {
     const created: { blocks?: unknown; clientNonce?: string }[] = [];
     const events: { type: string; payload: Record<string, unknown> }[] = [];
     const tx = {
@@ -9360,7 +9364,11 @@ describe("threads.endCall", () => {
       thread: { update: vi.fn().mockResolvedValue({ nextMessageSeq: 3, nextEventSeq: 5 }) },
       message: {
         findUnique: vi.fn().mockResolvedValue(null),
-        findFirst: vi.fn().mockResolvedValue(userSpoke ? { id: "utterance-1" } : null),
+        findFirst: vi
+          .fn()
+          .mockResolvedValue(
+            userSpoke ? { id: "utterance-1", runId: lastTurn ? "turn-1" : null } : null,
+          ),
         create: vi.fn(async ({ data }: { data: { blocks: unknown; clientNonce?: string } }) => {
           if (duplicateMarker) throw Object.assign(new Error("unique"), { code: "P2002" });
           created.push({ blocks: data.blocks, clientNonce: data.clientNonce });
@@ -9371,7 +9379,7 @@ describe("threads.endCall", () => {
       task: { create: vi.fn().mockResolvedValue({ id: "task-1" }) },
       run: {
         create: vi.fn().mockResolvedValue({ id: "run-1" }),
-        findUnique: vi.fn().mockResolvedValue({ status: "queued", startedAt: null }),
+        findUnique: vi.fn().mockResolvedValue({ status: lastTurn ?? "queued", startedAt: null }),
       },
     };
     tx.event = {
@@ -9450,6 +9458,23 @@ describe("threads.endCall", () => {
     expect(String(tx.run.create.mock.calls[0]?.[0]?.data?.clientNonce)).toMatch(/^call:call-1:/);
     expect(enqueue).toHaveBeenCalledOnce();
   });
+
+  it.each([["completed"], [null]])(
+    "closes a settled call (last turn %s) without waking the bot",
+    async (lastTurn) => {
+      const { call, created, events, tx, enqueue } = fixture(false, true, lastTurn);
+      const response = await call();
+      expect(response.status).toBe(200);
+      expect(created[0]?.clientNonce).toBe("call:call-1:marker");
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.message.created",
+        "thread.call.ended",
+      ]);
+      expect(tx.task.create).not.toHaveBeenCalled();
+      expect(tx.run.create).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps the connected time the caller reported on the card", async () => {
     const { call, created } = fixture();

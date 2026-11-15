@@ -30,7 +30,7 @@ export function conversationCallInstructions(input: {
   return [
     `You are ${input.botName}, on a live voice call with your user.${about ? ` ${about}` : ""}`,
     `It is ${when} for the user.`,
-    "Speak the user's language, as in the conversation so far. Use short, natural spoken sentences, never lists or markdown.",
+    "Reply in the language the user is speaking right now. If they switch languages, switch with them. Use short, natural spoken sentences, never lists or markdown.",
     "",
     "Backchannel policy: Few backchannels. Never talk over the user.",
     "Interruption policy: Stop as soon as the user speaks, and listen.",

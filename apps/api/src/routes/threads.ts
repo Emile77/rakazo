@@ -74,7 +74,10 @@ export function callMarkerClientNonce(callId: string): string {
 
 /** The card is closed by a marker; the run that follows finishes whatever the call left open. */
 const HANG_UP_PROMPT =
-  "The voice call just ended because the user hung up. First call end_call with a short title for the call (leave farewell empty). Then, if anything the user asked for during the call is still unfinished, complete it now as a normal chat reply with full formatting. If nothing is pending, reply with one short sentence. If the call brought up something worth remembering, keep it as you normally would.";
+  "The voice call just ended because the user hung up, possibly with work from the call unfinished. First call end_call with a short title for the call (leave farewell empty). Then, if anything the user asked for during the call is still unfinished, complete it now as a normal chat reply with full formatting. If nothing is pending, write nothing after end_call. If the call brought up something worth remembering, keep it as you normally would.";
+
+/** A call's work is open when the turn its latest handoff started has not completed. */
+const SETTLED_CALL_RUN_STATUS = "completed";
 
 /** A send with routines that already has runs saved under its nonce. */
 class SavedSubmission extends Error {}
@@ -562,6 +565,22 @@ export function threadsRoutes(ctx: RouterContext) {
               select: { id: true },
             });
             if (!userUtterance) return null;
+            // Only a call whose last handoff did not complete needs the bot again; a call
+            // that ended cleanly closes with its marker alone.
+            const handoff = await tx.message.findFirst({
+              where: {
+                threadId,
+                role: "user",
+                clientNonce: { startsWith: `${CALL_CLIENT_NONCE_PREFIX}${input.callId}:` },
+                runId: { not: null },
+              },
+              orderBy: { seq: "desc" },
+              select: { runId: true },
+            });
+            const lastTurn = handoff?.runId
+              ? await tx.run.findUnique({ where: { id: handoff.runId }, select: { status: true } })
+              : null;
+            const pending = Boolean(handoff?.runId && lastTurn?.status !== SETTLED_CALL_RUN_STATUS);
             // The marker's deterministic nonce is the idempotency key: the unique
             // (threadId, clientNonce) index rejects a second hang-up, concurrent or not.
             const message = await createThreadMessageInTransaction(tx, {
@@ -578,6 +597,23 @@ export function threadsRoutes(ctx: RouterContext) {
               type: "thread.message.created",
               payload: { messageId: message.id, role: "bot", blocks, callId: input.callId },
             });
+            if (!pending) {
+              const ended = await appendEventInTransaction(tx, {
+                spaceId: context.actor.spaceId,
+                threadId,
+                botId,
+                type: "thread.call.ended",
+                payload: {
+                  botId,
+                  threadId,
+                  callId: input.callId,
+                  title: "",
+                  farewell: "",
+                  messageId: message.id,
+                },
+              });
+              return { runId: null, eventSeq: ended.seq };
+            }
             const task = await tx.task.create({
               data: {
                 spaceId: context.actor.spaceId,
@@ -626,6 +662,7 @@ export function threadsRoutes(ctx: RouterContext) {
         await deps.events.notify(threadId, committed.eventSeq).catch((error) => {
           getLogger().error("call end realtime notification", error);
         });
+        if (!committed.runId) return { ok: true as const };
         // The queued run is durable; a missed wake is repaired by the reconciler.
         await deps.jobs.enqueue(runContinueJob(committed.runId)).catch((error) => {
           getLogger().error("call end enqueue", error);
