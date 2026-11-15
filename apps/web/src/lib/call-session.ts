@@ -105,6 +105,8 @@ let feed: {
 } | null = null;
 /** Every bot message already spoken this call: a streaming message updates many times. */
 const spokenMessageIds = new Set<string>();
+/** Bot messages waiting to tell an update from a reply landing as its run ends. */
+const pendingUpdateIds = new Set<string>();
 let unsubSpeech: (() => void) | null = null;
 let unsubDictation: (() => void) | null = null;
 let hangUpAfterReply = false;
@@ -379,10 +381,14 @@ function conversationSpeaking(speaking: boolean) {
 }
 
 /** Gives the live voice something to say; it words it itself, in the caller's language. */
-function sayInCall(text: string, handoffId?: string) {
+function sayInCall(text: string, handoffId?: string, progress?: boolean) {
   if (!state) return;
   void rpc.threads
-    .updateCall({ botId: state.botId, callId, say: { text, ...(handoffId ? { handoffId } : {}) } })
+    .updateCall({
+      botId: state.botId,
+      callId,
+      say: { text, ...(handoffId ? { handoffId } : {}), ...(progress ? { progress } : {}) },
+    })
     .catch((error) => reportClientError(error, "voice.conversation"));
 }
 
@@ -899,6 +905,7 @@ function reactToThread() {
   // card keeps its live progress message after the card; that is not a reply.
   const turnIndex = messages.findLastIndex((message) => message.role === "user");
   const replyRunId = approvalRunId ?? awaitedRunId;
+  if (conversation && replyRunId) speakUpdates(messages.slice(turnIndex + 1), replyRunId);
   const lastBot = messages
     .slice(turnIndex + 1)
     .findLast(
@@ -954,6 +961,44 @@ function reactToThread() {
     awaitedRunId = null;
     set({ caption: errorText(thread?.run?.id === replyRunId ? thread.run.error : undefined) });
     void listen();
+  }
+}
+
+/** How long a message must stay before its still-running run counts it as an update. */
+const UPDATE_SETTLE_MS = 1_500;
+
+/**
+ * The bot's messages while its run keeps working (its start message and updates) are
+ * spoken as they come. One still unfinished after a short wait is an update, not the reply
+ * landing just before its run ends.
+ */
+function speakUpdates(messages: readonly ThreadMessage[], runId: string) {
+  for (const message of messages) {
+    if (
+      message.role !== "bot" ||
+      message.runId !== runId ||
+      message.id.startsWith("progress:") ||
+      spokenMessageIds.has(message.id) ||
+      pendingUpdateIds.has(message.id) ||
+      replyFinished(message)
+    )
+      continue;
+    pendingUpdateIds.add(message.id);
+    const epoch = sessionEpoch;
+    setTimeout(() => {
+      pendingUpdateIds.delete(message.id);
+      if (epoch !== sessionEpoch || !conversation || botEndedCall) return;
+      if (spokenMessageIds.has(message.id)) return;
+      const current = thread?.messages.find((candidate) => candidate.id === message.id);
+      if (!current || replyFinished(current)) {
+        reactToThread();
+        return;
+      }
+      const text = speechFromBlocks(current.blocks);
+      if (!text) return;
+      spokenMessageIds.add(current.id);
+      sayInCall(text, undefined, true);
+    }, UPDATE_SETTLE_MS);
   }
 }
 

@@ -50,6 +50,7 @@ export function conversationCallInstructions(input: {
     "When you delegate, first confirm in one short sentence what you understood, for example 'OK, I'm checking the disk space.'",
     "Never announce a result, a success or a finished action before a result arrives. Never guess facts the result does not state.",
     "When a result arrives, relay it in one or two sentences. If it says more is in the chat, say so.",
+    "When an update arrives while the bot keeps working, say it in one or two short sentences, without presenting the work as done. Never describe the bot's plan yourself.",
     "Approvals, codes and passwords are only ever entered on screen; never ask the user to say them.",
   ].join("\n");
 }
@@ -68,6 +69,11 @@ export function conversationHistory(
 /** What the talker hears back when the bot's turn ends. */
 export function conversationResult(reply: string): string {
   return `The bot finished. Relay its reply in its meaning, adding nothing it does not say:\n${reply.trim()}`;
+}
+
+/** What the talker hears when the bot sends an update while it keeps working. */
+export function conversationProgress(update: string): string {
+  return `The bot is still working and sent this update. Tell the user in its meaning, adding nothing it does not say, and do not present the work as done:\n${update.trim()}`;
 }
 
 /**

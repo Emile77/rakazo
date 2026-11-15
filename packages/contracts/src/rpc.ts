@@ -802,6 +802,8 @@ export const appContract = {
             .object({
               text: z.string().min(1).max(4_000),
               handoffId: z.string().max(200).optional(),
+              /** An update while the bot keeps working, not its result. */
+              progress: z.boolean().optional(),
             })
             .optional(),
           listening: z.boolean().optional(),

@@ -7,6 +7,7 @@ import {
   callClientNonce,
   conversationCallInstructions,
   conversationHistory,
+  conversationProgress,
   conversationResult,
   createConversationTranscript,
   speechFromBlocks,
@@ -262,7 +263,7 @@ export function createConversationCalls(deps: ConversationCallDeps) {
       input: {
         botId: string;
         callId: string;
-        say?: { text: string; handoffId?: string };
+        say?: { text: string; handoffId?: string; progress?: boolean };
         listening?: boolean;
       },
     ) {
@@ -270,7 +271,9 @@ export function createConversationCalls(deps: ConversationCallDeps) {
       if (input.listening !== undefined) call.link.setListening(input.listening);
       if (input.say) {
         call.transcript.relaying();
-        call.link.say(conversationResult(input.say.text), input.say.handoffId);
+        // An update leaves the handoff open for its result.
+        if (input.say.progress) call.link.say(conversationProgress(input.say.text));
+        else call.link.say(conversationResult(input.say.text), input.say.handoffId);
       }
     },
 

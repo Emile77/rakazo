@@ -835,7 +835,12 @@ describe("notes that can't be posted as messages", () => {
       ok: true,
       note: "This update was not posted. The chat already has enough interim messages for this run. Do not send more progress updates — keep working and put everything in your final reply.",
     };
-    expect(await update()).toEqual({ result: notYet, sent: [] });
+    // The start message posts at once; a fresh turn holds what follows it.
+    expect(await update()).toEqual({ result: { ok: true }, sent: ["On it, checking now."] });
+    expect(await update({ earlier: ["Starting."] })).toEqual({
+      result: notYet,
+      sent: ["Starting."],
+    });
 
     const earlier = ["One.", "Two.", "Three."];
     const longTurn = new Date(Date.now() - 120_000);
@@ -846,7 +851,7 @@ describe("notes that can't be posted as messages", () => {
     ).toEqual({ result: notYet, sent: [...earlier, "Yes, still on it."] });
   });
 
-  it("posts one heads-up at once once a fresh turn calls a browser or desktop tool", async () => {
+  it("posts the start message at once and holds the next one on a fresh turn", async () => {
     const sent = async (trigger: string, step: string, graphical = true) => {
       const { messages } = await runTurn("", false, undefined, [], "fyi", {
         trigger,
@@ -867,10 +872,9 @@ describe("notes that can't be posted as messages", () => {
     const headsUp = ["This will take a few minutes."];
     expect(await sent("user", "computer_observe")).toEqual(headsUp);
     expect(await sent("messaging", "browser_snapshot")).toEqual(headsUp);
-    // Other steps, tools this computer lacks, and runs nobody is waiting on keep the
-    // fresh-turn rule.
-    expect(await sent("user", "shell")).toEqual([]);
-    expect(await sent("user", "browser_snapshot", false)).toEqual([]);
+    expect(await sent("user", "shell")).toEqual(headsUp);
+    expect(await sent("user", "browser_snapshot", false)).toEqual(headsUp);
+    // Runs nobody is waiting on post nothing mid-turn.
     for (const trigger of ["routine", "webhook", "reaction", "bot_message"])
       expect(await sent(trigger, "browser_snapshot")).toEqual([]);
   });
@@ -1237,8 +1241,8 @@ describe("a message from the person while the bot works", () => {
         })
       ).messages;
     expect(sentTexts(await answer(true))).toEqual(["Yes, still on it."]);
-    // Without the person's message the turn is too fresh for an interim message.
-    expect(sentTexts(await answer(false))).toEqual([]);
+    // Without the person's message it is the start message, also posted at once.
+    expect(sentTexts(await answer(false))).toEqual(["Yes, still on it."]);
   });
 
   it("keeps a plain answer with no step after it in the reply", async () => {

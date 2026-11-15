@@ -1640,6 +1640,28 @@ describe("conversation call", () => {
     expect(speak).not.toHaveBeenCalled();
   });
 
+  it("speaks the bot's start message while its run keeps working", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+    getThread.mockResolvedValue(
+      snapshot([botMessage("start-1", "Checking the listing and the area.")], {
+        id: "run-1",
+        status: "running",
+      } as ThreadSnapshot["run"]) as never,
+    );
+    live.onEvent({ type: "handoff", handoffId: "d1", text: "Analyse this house." });
+    await flushMicrotasks();
+    expect(updateCall).not.toHaveBeenCalledWith(
+      expect.objectContaining({ say: expect.anything() }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(updateCall).toHaveBeenCalledWith({
+      botId: "call-bot",
+      callId: expect.any(String),
+      say: { text: "Checking the listing and the area.", progress: true },
+    });
+  });
+
   it("follows the voice's audio for the phase and mutes the microphone track", async () => {
     await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
     live.onSpeaking(true);

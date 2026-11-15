@@ -20,6 +20,7 @@ import { handoffToGroupBot } from "./group-handoff.js";
 import type { RunContext } from "./run-context.js";
 import {
   canPostLongTaskHeadsUp,
+  canPostStartMessage,
   canPublishDurableProgress,
   flushProgress,
   progressSinceBudgetStart,
@@ -276,7 +277,8 @@ export const messagingTools: ToolHandlers = {
     if (
       ctx.replyMode === "chat" &&
       !canPublishDurableProgress(reply) &&
-      !canPostLongTaskHeadsUp(ctx)
+      !canPostLongTaskHeadsUp(ctx) &&
+      !canPostStartMessage(ctx)
     ) {
       return call.finish({
         ok: true,

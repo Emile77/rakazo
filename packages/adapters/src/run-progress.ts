@@ -127,6 +127,15 @@ export function canPostLongTaskHeadsUp(ctx: RunContext) {
   );
 }
 
+/** The message that starts a person's task: the run's first interim message, posted at once. */
+export function canPostStartMessage(ctx: RunContext) {
+  return (
+    ctx.state.reply.midTurnProgressCount === 0 &&
+    isConversationalRun(ctx.run.trigger) &&
+    !runAllowsSilentEmpty(ctx.run.trigger)
+  );
+}
+
 export function progressSinceBudgetStart(reply: ReplyState) {
   return reply.midTurnProgressCount - reply.progressBudgetStart;
 }
