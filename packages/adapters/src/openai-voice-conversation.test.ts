@@ -41,6 +41,34 @@ describe("openConversation", () => {
     );
 
     expect(session).toEqual({ sessionId: "live_1", answerSdp: "answer" });
+    const greeted = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({ session: { id: "live_2" }, transport: { sdp: "answer" } }, { status: 201 }),
+      );
+    vi.stubGlobal("fetch", greeted);
+    await new OpenAIVoiceProvider().openConversation(
+      {
+        apiKey: "test-key",
+        voiceId: "ash",
+        instructions: "Be brief.",
+        history: [],
+        greeting: "Greet now.",
+        offerSdp: "offer",
+      },
+      context,
+    );
+    expect(JSON.parse(greeted.mock.calls[0]![1].body).session).toMatchObject({
+      input: [
+        {
+          type: "message",
+          role: "developer",
+          content: [{ type: "input_text", text: "Greet now." }],
+        },
+      ],
+      audio: { output: { voice: "ash" } },
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://api.openai.com/v1/live/sessions");
     expect(init.headers.authorization).toBe("Bearer test-key");
@@ -77,6 +105,7 @@ describe("conversationVoice", () => {
   it("keeps a voice that speaks live and falls back for one that cannot", () => {
     expect(conversationVoice("cedar")).toBe("cedar");
     expect(conversationVoice("sillage")).toBe("sillage");
+    expect(conversationVoice("ash")).toBe("ash");
     expect(conversationVoice("nova")).toBe("marin");
   });
 });
@@ -85,8 +114,19 @@ describe("conversationEventFromWire", () => {
   it.each([
     [{ type: "session.started" }, { type: "started" }],
     [
+      {
+        type: "session.started",
+        session: { id: "s", model: "gpt-live-1", audio: { output: { voice: "ash" } } },
+      },
+      { type: "started", model: "gpt-live-1", voice: "ash" },
+    ],
+    [
       { type: "session.input_transcript.delta", delta: "Hi" },
       { type: "transcript", role: "user", delta: "Hi" },
+    ],
+    [
+      { type: "session.output_transcript.delta", delta: "Hey", start_ms: 1000, end_ms: 1200 },
+      { type: "transcript", role: "bot", delta: "Hey", startMs: 1000, endMs: 1200 },
     ],
     [
       { type: "session.output_transcript.delta", delta: "Hey" },

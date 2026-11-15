@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   conversationCallInstructions,
+  conversationGreeting,
   conversationHistory,
   conversationResult,
   createConversationTranscript,
@@ -18,7 +19,9 @@ describe("conversationCallInstructions", () => {
     expect(text).toContain(
       "You are Ada, on a live voice call with your user. Helps with daily tasks.",
     );
-    expect(text).toContain("Generate when:");
+    expect(text).toContain("Generate by default.");
+    expect(text).toContain("even if you think you know it");
+    expect(text).toContain("unless a result from the bot said so");
     expect(text).toContain("Never announce a result");
     expect(text).toContain("10:00");
   });
@@ -39,7 +42,49 @@ describe("conversationHistory", () => {
   });
 });
 
+describe("conversationGreeting", () => {
+  it("asks the voice to greet as the bot and ask a short question, then listen", () => {
+    const text = conversationGreeting("Ada");
+    expect(text).toContain("Greet the user now as Ada");
+    expect(text).toContain("ask one short question");
+    expect(text).toContain("Then stop and listen.");
+  });
+});
+
 describe("createConversationTranscript", () => {
+  it("keeps a speaker's line whole when the other speaker cuts in", () => {
+    const transcript = createConversationTranscript();
+    transcript.hear("user", "Change the voice.", { startMs: 0, endMs: 1_000 });
+    transcript.hear("bot", "I'll ask the bot to ver", { startMs: 1_600, endMs: 2_400 });
+    expect(transcript.hear("user", "Yeah", { startMs: 2_300, endMs: 2_500 })).toEqual({ line: 2 });
+    expect(transcript.hear("bot", "ify.", { startMs: 2_450, endMs: 2_700 })).toEqual({ line: 1 });
+    expect(transcript.lines()).toEqual([
+      { role: "user", text: "Change the voice." },
+      { role: "bot", text: "I'll ask the bot to verify." },
+      { role: "user", text: "Yeah" },
+    ]);
+  });
+
+  it("starts a new line after a real pause", () => {
+    const transcript = createConversationTranscript();
+    transcript.hear("bot", "Hello.", { startMs: 0, endMs: 500 });
+    transcript.hear("user", "Hi.", { startMs: 900, endMs: 1_200 });
+    expect(transcript.hear("bot", "How can I help?", { startMs: 2_000, endMs: 2_800 })).toEqual({
+      line: 2,
+    });
+  });
+
+  it("never extends a user line a handoff already claimed", () => {
+    const transcript = createConversationTranscript();
+    transcript.hear("user", "Check the disk.", { startMs: 0, endMs: 1_000 });
+    transcript.claimRequest();
+    transcript.hear("bot", "Checking.", { startMs: 1_100, endMs: 1_500 });
+    expect(transcript.hear("user", "And memory.", { startMs: 1_400, endMs: 2_000 })).toEqual({
+      line: 2,
+    });
+    expect(transcript.claimRequest()).toBe("And memory.");
+  });
+
   it("joins fragments into lines and claims only the user's newest request", () => {
     const transcript = createConversationTranscript();
     transcript.hear("user", "Hi, ");

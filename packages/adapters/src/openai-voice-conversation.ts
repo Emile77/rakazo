@@ -12,8 +12,43 @@ import { readVoiceJson, voiceDeadline, voiceRequestError } from "./voice-http.js
 const API = "https://api.openai.com/v1";
 const SIDEBAND = "wss://api.openai.com/v1/live/sessions";
 const MODEL = "gpt-live-1";
-/** Speech voices that also speak live; any other bot voice falls back to the default. */
-const CONVERSATION_VOICES = new Set(["marin", "cedar", "brise", "sillage"]);
+/**
+ * Voices GPT-Live speaks: the standard speech voices plus its own. Any other bot voice falls
+ * back to the default.
+ */
+const CONVERSATION_VOICES = new Set([
+  "alloy",
+  "ash",
+  "ballad",
+  "cedar",
+  "coral",
+  "echo",
+  "marin",
+  "sage",
+  "shimmer",
+  "verse",
+  "quartz",
+  "ripple",
+  "vesper",
+  "willow",
+  "stone",
+  "gleam",
+  "meridian",
+  "bossa",
+  "tempo",
+  "beacon",
+  "delta",
+  "cinder",
+  "nuri",
+  "juni",
+  "flitz",
+  "brise",
+  "sillage",
+  "nira",
+  "harema",
+  "shida",
+  "noeul",
+]);
 const DEFAULT_CONVERSATION_VOICE = "marin";
 /** Gives the API time to note the handoff before the talker acknowledges it. */
 const ACKNOWLEDGEMENT_DELAY_MS = 400;
@@ -39,15 +74,31 @@ export async function openOpenAIConversation(
       session: {
         model: MODEL,
         instructions: request.instructions,
-        input: request.history.map((line) =>
-          line.role === "user"
-            ? { type: "message", role: "user", content: [{ type: "input_text", text: line.text }] }
-            : {
-                type: "message",
-                role: "assistant",
-                content: [{ type: "output_text", text: line.text }],
-              },
-        ),
+        input: [
+          ...request.history.map((line) =>
+            line.role === "user"
+              ? {
+                  type: "message",
+                  role: "user",
+                  content: [{ type: "input_text", text: line.text }],
+                }
+              : {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: line.text }],
+                },
+          ),
+          // The provider greets most reliably when the greeting is also in the startup input.
+          ...(request.greeting
+            ? [
+                {
+                  type: "message",
+                  role: "developer",
+                  content: [{ type: "input_text", text: request.greeting }],
+                },
+              ]
+            : []),
+        ],
         audio: { output: { voice: conversationVoice(request.voiceId) } },
         delegation: { type: "client", acknowledgement_delay_ms: ACKNOWLEDGEMENT_DELAY_MS },
       },
@@ -73,8 +124,15 @@ export function conversationEventFromWire(raw: unknown): VoiceConversationEvent 
   if (!raw || typeof raw !== "object") return null;
   const event = raw as Record<string, unknown>;
   switch (event.type) {
-    case "session.started":
-      return { type: "started" };
+    case "session.started": {
+      const session = event.session as
+        | { model?: unknown; audio?: { output?: { voice?: unknown } } }
+        | undefined;
+      const model = typeof session?.model === "string" ? session.model : undefined;
+      const voice =
+        typeof session?.audio?.output?.voice === "string" ? session.audio.output.voice : undefined;
+      return { type: "started", ...(model ? { model } : {}), ...(voice ? { voice } : {}) };
+    }
     case "session.input_transcript.delta":
     case "session.output_transcript.delta": {
       const delta = typeof event.delta === "string" ? event.delta : "";
@@ -83,6 +141,8 @@ export function conversationEventFromWire(raw: unknown): VoiceConversationEvent 
         type: "transcript",
         role: event.type === "session.input_transcript.delta" ? "user" : "bot",
         delta,
+        ...(typeof event.start_ms === "number" ? { startMs: event.start_ms } : {}),
+        ...(typeof event.end_ms === "number" ? { endMs: event.end_ms } : {}),
       };
     }
     case "session.delegation.created": {

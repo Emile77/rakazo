@@ -6,6 +6,7 @@ import {
   CONVERSATION_PROMISE_GRACE_MS,
   callClientNonce,
   conversationCallInstructions,
+  conversationGreeting,
   conversationHistory,
   conversationProgress,
   conversationResult,
@@ -54,6 +55,8 @@ interface ConversationCall {
   backlog: ConversationCallEvent[];
   wake: (() => void) | null;
   ended: boolean;
+  /** What the talker says first; cleared once said or once the caller speaks first. */
+  greeting: string | null;
 }
 
 /**
@@ -127,8 +130,12 @@ export function createConversationCalls(deps: ConversationCallDeps) {
             releaseHandoff();
             keep(call);
           }
-          transcript.hear(event.role, event.delta);
-          push(call, { type: "caption", role: event.role, text: event.delta });
+          if (event.role === "user") call.greeting = null;
+          const heard = transcript.hear(event.role, event.delta, {
+            startMs: event.startMs,
+            endMs: event.endMs,
+          });
+          push(call, { type: "caption", role: event.role, text: event.delta, line: heard.line });
           if (event.role !== "bot") continue;
           if (promiseTimer) clearTimeout(promiseTimer);
           promiseTimer = setTimeout(() => {
@@ -140,6 +147,13 @@ export function createConversationCalls(deps: ConversationCallDeps) {
           releaseHandoff();
           const timer = setTimeout(releaseHandoff, HANDOFF_SETTLE_MS);
           settle = { handoffId: event.handoffId, timer };
+        } else if (event.type === "started") {
+          getLogger().info("conversation call started", {
+            model: event.model ?? "unknown",
+            voice: event.voice ?? "unknown",
+          });
+          if (call.greeting) call.link.say(call.greeting);
+          call.greeting = null;
         } else if (event.type === "usage") {
           seconds = event.seconds;
         } else if (event.type === "ended") {
@@ -164,7 +178,14 @@ export function createConversationCalls(deps: ConversationCallDeps) {
     /** Opens the conversation and returns the provider's answer for the caller's offer. */
     async connect(
       actor: Actor,
-      input: { botId: string; threadId: string; callId: string; offerSdp: string },
+      input: {
+        botId: string;
+        threadId: string;
+        callId: string;
+        offerSdp: string;
+        /** The voice greets the caller first. */
+        greet?: boolean;
+      },
     ) {
       if (!voiceLiveCallsEnabled(deps)) {
         throw new ORPCError("PRECONDITION_FAILED", {
@@ -217,6 +238,7 @@ export function createConversationCalls(deps: ConversationCallDeps) {
               timeZone: user?.timezone,
             }),
             history,
+            ...(input.greet === false ? {} : { greeting: conversationGreeting(bot.name) }),
             offerSdp: input.offerSdp,
           },
           context,
@@ -241,6 +263,7 @@ export function createConversationCalls(deps: ConversationCallDeps) {
         backlog: [],
         wake: null,
         ended: false,
+        greeting: input.greet === false ? null : conversationGreeting(bot.name),
       };
       calls.set(key, call);
       const deadline = setTimeout(() => void link.close(), MAX_CONVERSATION_MS);

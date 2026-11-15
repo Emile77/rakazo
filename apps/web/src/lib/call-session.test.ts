@@ -1609,6 +1609,18 @@ describe("conversation call", () => {
     vi.useRealTimers();
   });
 
+  it("keeps each speaker's line whole when their speech overlaps", async () => {
+    await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
+    expect(startConversation).toHaveBeenCalledWith(expect.objectContaining({ greet: true }));
+    live.onEvent({ type: "caption", role: "bot", text: "I'll ask the bot to ver", line: 0 });
+    live.onEvent({ type: "caption", role: "user", text: "Yeah", line: 1 });
+    live.onEvent({ type: "caption", role: "bot", text: "ify.", line: 0 });
+    expect(getSnapshot()?.exchanges).toEqual([
+      { role: "bot", text: "I'll ask the bot to verify." },
+      { role: "user", text: "Yeah" },
+    ]);
+  });
+
   it("talks live instead of dictating, and hands a request to the bot as a call turn", async () => {
     await answeredCall({ botId: "call-bot", botName: "Ada", conversation: true });
 

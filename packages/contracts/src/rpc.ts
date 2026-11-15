@@ -774,6 +774,8 @@ export const appContract = {
             .max(200)
             .regex(/^[^:]+$/),
           offerSdp: z.string().min(1).max(20_000),
+          /** The voice greets first; false when the call already has an opening to say. */
+          greet: z.boolean().optional(),
         }),
       )
       .output(z.object({ answerSdp: z.string() })),

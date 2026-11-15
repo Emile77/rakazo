@@ -141,6 +141,8 @@ let conversation: {
   hangUpAfterSpeech: boolean;
   /** The voice was holding the caller's audio for a code typed on screen. */
   holdingAudio: boolean;
+  /** The API's transcript line numbers, mapped to their place in the call's exchanges. */
+  lines: Map<number, number>;
 } | null = null;
 /** Counting down an interim phrase heard over the reply, before it counts as cutting in. */
 const interim = createInterimBargeIn(() => {
@@ -293,6 +295,7 @@ async function converse(botId: string, opening: string) {
     audio: null,
     speaking: false,
     hangUpAfterSpeech: false,
+    lines: new Map(),
     holdingAudio: false,
   };
   conversation = live;
@@ -306,6 +309,7 @@ async function converse(botId: string, opening: string) {
     const audio = await startConversation({
       botId,
       callId,
+      greet: !opening,
       signal: controller.signal,
       onEvent: (event) => {
         if (conversation === live) hearConversation(event);
@@ -362,11 +366,23 @@ function hearConversation(event: ConversationCallEvent) {
     return;
   }
   const exchanges = [...state.exchanges];
-  const last = exchanges.at(-1);
-  if (last?.role === event.role)
-    exchanges[exchanges.length - 1] = { ...last, text: last.text + event.text };
-  else exchanges.push({ role: event.role, text: event.text.trimStart() });
-  const line = exchanges.at(-1)?.text ?? "";
+  // The API numbers the call's lines; overlapping speech can extend an earlier one.
+  const known =
+    event.line === undefined || !conversation ? undefined : conversation.lines.get(event.line);
+  const at =
+    known !== undefined && exchanges[known]?.role === event.role
+      ? known
+      : event.line === undefined && exchanges.at(-1)?.role === event.role
+        ? exchanges.length - 1
+        : -1;
+  if (at >= 0) {
+    const current = exchanges[at]!;
+    exchanges[at] = { ...current, text: current.text + event.text };
+  } else {
+    exchanges.push({ role: event.role, text: event.text.trimStart() });
+    if (event.line !== undefined) conversation?.lines.set(event.line, exchanges.length - 1);
+  }
+  const line = exchanges[at >= 0 ? at : exchanges.length - 1]?.text ?? "";
   set(event.role === "user" ? { exchanges, heard: line } : { exchanges, caption: line });
 }
 

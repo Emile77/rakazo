@@ -36,16 +36,18 @@ export function conversationCallInstructions(input: {
     "Interruption policy: Stop as soon as the user speaks, and listen.",
     "",
     "Delegation policy:",
-    "Backend: the bot behind you can use its computer, files, the web, its memory, connected apps, other bots and routines, and it keeps the chat history.",
-    "Generate when:",
-    "- The request needs a tool, a check, an action, current information or something remembered.",
-    "- The user corrects, adds to or cancels work in progress.",
-    "- The user answers a question the work asked.",
-    "- The user asks about what you or the bot can do, or about earlier chats.",
+    "Backend: the bot behind you is you, with all your tools: its computer, files, the web, its memory, settings, connected apps, other bots and routines, and the full chat history. You only hear and speak; you know nothing else about the user, their bots, settings, servers or past work.",
+    "Generate by default. Generate whenever the user asks for anything that is not pure small talk, including:",
+    "- Any fact about the user, their bots, settings, voice, servers, files, schedules, messages or earlier chats, even if you think you know it.",
+    "- Any check, action, change, message to someone, current information or something remembered.",
+    "- What you or the bot can or cannot do.",
+    "- Corrections, additions or cancellations of work in progress, and answers to a question the work asked.",
     "- The user wants to hang up.",
-    "Do not generate when:",
-    "- Greetings, small talk, general knowledge, or repeating a result already given.",
-    "- You need a short clarification to understand the request.",
+    "Do not generate only for:",
+    "- Greetings, thanks and small talk.",
+    "- A short clarification you need to understand the request.",
+    "- Repeating a result the bot already gave in this call.",
+    "Never say that something is or is not set, saved, running, possible or available unless a result from the bot said so. If unsure, generate.",
     "",
     "When you delegate, first confirm in one short sentence what you understood, for example 'OK, I'm checking the disk space.'",
     "Never announce a result, a success or a finished action before a result arrives. Never guess facts the result does not state.",
@@ -53,6 +55,11 @@ export function conversationCallInstructions(input: {
     "When an update arrives while the bot keeps working, say it in one or two short sentences, without presenting the work as done. Never describe the bot's plan yourself.",
     "Approvals, codes and passwords are only ever entered on screen; never ask the user to say them.",
   ].join("\n");
+}
+
+/** What the talker says when the call opens, before the caller speaks. */
+export function conversationGreeting(botName: string): string {
+  return `The call just connected. Greet the user now as ${botName}, in one short sentence, in the language of the conversation so far (the user's usual language if there is none), and ask one short question such as how you can help. Then stop and listen.`;
 }
 
 /** The thread's latest readable lines, oldest first, trimmed for the talker. */
@@ -81,7 +88,17 @@ export function conversationProgress(update: string): string {
  * belong to a handoff, which the bot's own call turn already keeps in the chat.
  */
 type HeardPart = "talk" | "request" | "ack" | "relay";
-type HeardLine = CallExchange & { part: HeardPart };
+type HeardLine = CallExchange & { part: HeardPart; endMs?: number };
+
+/**
+ * A fragment that starts within this long of its speaker's previous one still belongs to that
+ * line, even when the other speaker's words arrived in between: the call is full duplex, so
+ * overlapping speech interleaves the two speakers' fragments.
+ */
+export const CONVERSATION_LINE_GAP_MS = 800;
+
+/** Where a heard fragment went: the index of its line in the transcript. */
+export type HeardAt = { line: number };
 
 /**
  * The call's transcript as the API hears it: fragments joined into lines, the requests
@@ -96,19 +113,43 @@ export function createConversationTranscript() {
   /** What the talker's next line will be, when a handoff or a result already decided it. */
   let nextBotPart: "ack" | "relay" | null = null;
   return {
-    hear(role: CallExchange["role"], delta: string) {
-      const last = lines.at(-1);
+    hear(
+      role: CallExchange["role"],
+      delta: string,
+      timing: { startMs?: number; endMs?: number } = {},
+    ): HeardAt {
+      const extend = (index: number): HeardAt => {
+        const line = lines[index]!;
+        line.text += delta;
+        if (timing.endMs !== undefined) line.endMs = timing.endMs;
+        return { line: index };
+      };
       // A result the talker relays is a new line, even right after its acknowledgement.
-      if (last?.role === role && !(role === "bot" && nextBotPart)) {
-        last.text += delta;
-        return;
+      const fresh = role === "bot" && nextBotPart;
+      const last = lines.at(-1);
+      if (!fresh && last?.role === role) return extend(lines.length - 1);
+      // The other speaker cut in: this speaker's line goes on if their words are continuous,
+      // unless that line was already given to the chat or claimed by a handoff.
+      const own = lines.findLastIndex((line) => line.role === role);
+      const ownLine = lines[own];
+      if (
+        !fresh &&
+        ownLine &&
+        own >= keptTo &&
+        (role === "bot" || own >= claimedTo) &&
+        ownLine.endMs !== undefined &&
+        timing.startMs !== undefined &&
+        timing.startMs - ownLine.endMs <= CONVERSATION_LINE_GAP_MS
+      ) {
+        return extend(own);
       }
       let part: HeardPart = "talk";
       if (role === "bot" && nextBotPart) {
         part = nextBotPart;
         nextBotPart = null;
       }
-      lines.push({ role, text: delta, part });
+      lines.push({ role, text: delta, part, endMs: timing.endMs });
+      return { line: lines.length - 1 };
     },
     /**
      * The user's words since the previous handoff, leaving out small talk the chat already

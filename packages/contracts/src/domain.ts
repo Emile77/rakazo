@@ -1378,7 +1378,13 @@ export type VoiceStatus = z.infer<typeof VoiceStatusSchema>;
 /** What a conversation call's client hears from the API while the call runs. */
 export const ConversationCallEventSchema = z.discriminatedUnion("type", [
   /** A fragment of what the caller or the voice said. */
-  z.object({ type: z.literal("caption"), role: z.enum(["user", "bot"]), text: z.string() }),
+  z.object({
+    type: z.literal("caption"),
+    role: z.enum(["user", "bot"]),
+    text: z.string(),
+    /** The transcript line this fragment extends; overlapping speech can extend an earlier one. */
+    line: z.number().int().nonnegative().optional(),
+  }),
   /** The voice handed the caller's request to the bot; `handoffId` ties the reply to it. */
   z.object({
     type: z.literal("handoff"),

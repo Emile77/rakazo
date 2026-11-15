@@ -483,6 +483,7 @@ export function threadsRoutes(ctx: RouterContext) {
           threadId: target.threadId,
           callId: input.callId,
           offerSdp: input.offerSdp,
+          greet: input.greet ?? true,
         });
       }),
       callEvents: callsEnabled.threads.callEvents.handler(async function* ({ context, input }) {

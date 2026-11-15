@@ -887,6 +887,8 @@ export interface VoiceConversationOpenRequest {
   history: VoiceConversationLine[];
   /** The caller's WebRTC session description offer. */
   offerSdp: string;
+  /** What the talker says first, before the caller speaks; absent to wait for the caller. */
+  greeting?: string;
   signal?: AbortSignal;
 }
 
@@ -907,8 +909,10 @@ export interface VoiceConversationSession {
  * carries no text, so the API rebuilds the request from the caller's transcript.
  */
 export type VoiceConversationEvent =
-  | { type: "started" }
-  | { type: "transcript"; role: "user" | "bot"; delta: string }
+  /** The session the provider actually runs, when it says so. */
+  | { type: "started"; model?: string; voice?: string }
+  /** `startMs`/`endMs`: the fragment's place on the session timeline, when the provider gives it. */
+  | { type: "transcript"; role: "user" | "bot"; delta: string; startMs?: number; endMs?: number }
   | { type: "handoff"; handoffId: string }
   | { type: "usage"; seconds: number }
   | { type: "ended"; reason: "closed" | "failed" };

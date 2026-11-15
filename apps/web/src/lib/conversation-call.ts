@@ -20,6 +20,8 @@ export interface ConversationAudio {
 export async function startConversation(input: {
   botId: string;
   callId: string;
+  /** The voice greets first; false when the call has its own opening to say. */
+  greet: boolean;
   signal: AbortSignal;
   onEvent: (event: ConversationCallEvent) => void;
   onSpeaking: (speaking: boolean) => void;
@@ -57,7 +59,10 @@ export async function startConversation(input: {
     await peer.setLocalDescription(await peer.createOffer());
     const offerSdp = peer.localDescription?.sdp;
     if (!offerSdp) throw new Error("No audio offer.");
-    const { answerSdp } = await rpc.threads.connectCall({ botId, callId, offerSdp }, { signal });
+    const { answerSdp } = await rpc.threads.connectCall(
+      { botId, callId, offerSdp, greet: input.greet },
+      { signal },
+    );
     await peer.setRemoteDescription({ type: "answer", sdp: answerSdp });
     const feed = await rpc.threads.callEvents({ botId, callId }, { signal });
     void (async () => {

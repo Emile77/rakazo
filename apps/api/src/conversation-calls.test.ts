@@ -148,7 +148,34 @@ describe("createConversationCalls", () => {
       { role: "bot", text: "Hello again." },
     ]);
     expect(request.offerSdp).toBe("offer");
+    expect(request.greeting).toContain("Greet the user now as Ada");
     await calls.end(actor, "call1");
+  });
+
+  it("greets once the session starts, unless the caller spoke first or the call has an opening", async () => {
+    const first = setup();
+    await first.calls.connect(actor, input);
+    first.fake.emit({ type: "started", model: "gpt-live-1", voice: "ash" });
+    await vi.waitFor(() => expect(first.fake.said).toHaveLength(1));
+    expect(first.fake.said[0]?.text).toContain("Greet the user now as Ada");
+    await first.calls.end(actor, "call1");
+
+    const spoke = setup();
+    await spoke.calls.connect(actor, input);
+    spoke.fake.emit({ type: "transcript", role: "user", delta: "Hi" });
+    spoke.fake.emit({ type: "started" });
+    await spoke.calls.end(actor, "call1");
+    expect(spoke.fake.said).toEqual([]);
+
+    const answered = setup();
+    await answered.calls.connect(actor, { ...input, greet: false });
+    const [request] = answered.openConversation.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+    ];
+    expect(request.greeting).toBeUndefined();
+    answered.fake.emit({ type: "started" });
+    await answered.calls.end(actor, "call1");
+    expect(answered.fake.said).toEqual([]);
   });
 
   it("refuses when the server has not turned live calls on", async () => {
@@ -175,10 +202,10 @@ describe("createConversationCalls", () => {
     fake.emit({ type: "handoff", handoffId: "d1" });
     fake.emit({ type: "transcript", role: "bot", delta: "Checking." });
     expect(await take(events, 4)).toEqual([
-      { type: "caption", role: "user", text: "How much disk " },
-      { type: "caption", role: "user", text: "is left?" },
+      { type: "caption", role: "user", text: "How much disk ", line: 0 },
+      { type: "caption", role: "user", text: "is left?", line: 0 },
       { type: "handoff", handoffId: "d1", text: "How much disk is left?" },
-      { type: "caption", role: "bot", text: "Checking." },
+      { type: "caption", role: "bot", text: "Checking.", line: 1 },
     ]);
     await calls.end(actor, "call1");
   });
