@@ -1,0 +1,23 @@
+name: "ci: temp typecheck"
+on:
+  push:
+    branches: [ci/typecheck-aware]
+permissions:
+  contents: read
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-workspace
+        with:
+          turbo: check
+      - run: pnpm lint
+      - run: pnpm db:generate
+        env:
+          DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
+      - run: pnpm check
+      - run: pnpm exec vitest run packages/core/src/call-activity.test.ts packages/core/src/call-session.test.ts packages/core/src/conversation-call.test.ts apps/api/src/conversation-calls.test.ts apps/web/src/lib/call-session.test.ts apps/mobile/lib/call-session.test.ts packages/adapters/src/executor-user-progress.test.ts packages/adapters/src/user-progress.test.ts packages/adapters/src/executor.test.ts
