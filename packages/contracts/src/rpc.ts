@@ -808,6 +808,10 @@ export const appContract = {
               progress: z.boolean().optional(),
             })
             .optional(),
+          /** Quiet context for the voice: what happens in the chat during the call. */
+          note: z.string().min(1).max(4_000).optional(),
+          /** The newest handoff never became a chat turn: keep its words as small talk. */
+          keepHandoff: z.literal(true).optional(),
           listening: z.boolean().optional(),
         }),
       )

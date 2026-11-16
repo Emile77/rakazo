@@ -52,14 +52,16 @@ export type CallThread = {
 /**
  * What the caller's finished turn does:
  * - `enter_code`: the bot asked for a code or password; it is typed on screen, never spoken.
- * - `approve_on_screen`: the bot asked for an approval, which is only granted next to its details.
- * - `answer`: the spoken reply answers the bot's open question.
+ * - `approval_unclear`: the bot asked for an approval and the turn neither clearly approves nor
+ *   denies it; the card keeps waiting and the caller is asked again.
+ * - `answer`: the spoken reply answers the bot's open question; a clear spoken yes or no to an
+ *   approval answers it with `allow` or `deny` (never `always`, which is only given on screen).
  * - `follow_up`: the bot is still working; the turn steers that run.
  * - `send`: a new message.
  */
 export type CallTurn =
   | { kind: "enter_code" }
-  | { kind: "approve_on_screen"; messageId: string; runId: string }
+  | { kind: "approval_unclear"; messageId: string; runId: string }
   | { kind: "answer"; messageId: string; runId: string; answer: string }
   | { kind: "follow_up" }
   | { kind: "send" };
@@ -69,7 +71,14 @@ export function callTurn(thread: CallThread | null, text: string): CallTurn {
   if (pendingCallSecretAsk(thread)) return { kind: "enter_code" };
   const ask = pendingCallAsk(thread, thread?.run);
   if (ask?.blocks.some(isApprovalAskBlock)) {
-    return { kind: "approve_on_screen", messageId: ask.message.id, runId: ask.runId };
+    const decision = spokenDecision(text);
+    if (!decision) return { kind: "approval_unclear", messageId: ask.message.id, runId: ask.runId };
+    return {
+      kind: "answer",
+      messageId: ask.message.id,
+      runId: ask.runId,
+      answer: decision === "yes" ? "allow" : "deny",
+    };
   }
   if (ask) {
     const answer = spokenDecision(text) ?? text;

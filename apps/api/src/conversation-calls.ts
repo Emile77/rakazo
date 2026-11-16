@@ -288,11 +288,22 @@ export function createConversationCalls(deps: ConversationCallDeps) {
         botId: string;
         callId: string;
         say?: { text: string; handoffId?: string; progress?: boolean };
+        note?: string;
+        keepHandoff?: true;
         listening?: boolean;
       },
     ) {
       const call = own(actor, input.botId, input.callId);
       if (input.listening !== undefined) call.link.setListening(input.listening);
+      if (input.keepHandoff) {
+        const late = call.transcript.release();
+        if (late.length > 0) {
+          call.kept = call.kept
+            .then(() => keepSmallTalk(deps, call, late))
+            .catch((error) => getLogger().error("conversation call small talk", error));
+        }
+      }
+      if (input.note) call.link.note(input.note);
       if (input.say) {
         call.transcript.relaying();
         // An update leaves the handoff open for its result.

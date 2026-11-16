@@ -554,16 +554,17 @@ async function handleTranscript(raw: string): Promise<void> {
     return;
   }
   const closing = isFarewell(text);
-  // An approval is only granted on screen, next to its details; a spoken reply would be refused.
-  if (next.kind === "approve_on_screen") {
-    // Its card was already on screen; only what its run says after the tap is spoken.
+  // An approval is answered by a clear spoken yes or no (see callTurn); anything else keeps the
+  // card waiting, and the caller is asked again. The card on screen still works.
+  if (next.kind === "approval_unclear") {
+    // Its card was already on screen; only what its run says after the answer is spoken.
     spokenMessageId = next.messageId;
     // A new turn: an earlier request still in flight must not replace the run it expects.
     ++turnSeq;
     callRunId = next.runId;
     if (closing) hangUpAfterReply = true;
     void listen();
-    set({ caption: t`Approve or deny it on screen.` });
+    set({ caption: t`Say approve or deny, or use the card on screen.` });
     return;
   }
   const { botId } = state;

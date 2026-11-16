@@ -59,6 +59,7 @@ function fakeLink() {
   let wake: (() => void) | null = null;
   let closed = false;
   const said: Array<{ text: string; handoffId?: string }> = [];
+  const notes: string[] = [];
   const listening: boolean[] = [];
   const emit = (event: VoiceConversationEvent) => {
     queue.push(event);
@@ -82,14 +83,14 @@ function fakeLink() {
       },
     },
     say: (text, handoffId) => said.push({ text, handoffId }),
-    note: () => undefined,
+    note: (text) => notes.push(text),
     setListening: (value) => listening.push(value),
     close: async () => {
       closed = true;
       emit({ type: "ended", reason: "closed" });
     },
   };
-  return { link, emit, said, listening };
+  return { link, emit, said, notes, listening };
 }
 
 function setup(capable = true, liveCalls = true) {
@@ -246,6 +247,31 @@ describe("createConversationCalls", () => {
     expect(() => calls.update(actor, { botId: "bot", callId: "call1", listening: true })).toThrow(
       "This call is no longer live.",
     );
+  });
+
+  it("passes chat activity to the voice as quiet notes", async () => {
+    const { calls, fake } = setup();
+    await calls.connect(actor, input);
+    calls.update(actor, { botId: "bot", callId: "call1", note: "Call activity: a card waits." });
+    expect(fake.notes).toEqual(["Call activity: a card waits."]);
+    expect(fake.said).toEqual([]);
+    await calls.end(actor, "call1");
+  });
+
+  it("keeps the words of a handoff the bot never took", async () => {
+    const { calls, fake } = setup();
+    await calls.connect(actor, input);
+    const events = calls.events(actor, { botId: "bot", callId: "call1" });
+    fake.emit({ type: "transcript", role: "user", delta: "What does the card change?" });
+    fake.emit({ type: "handoff", handoffId: "d1" });
+    fake.emit({ type: "transcript", role: "bot", delta: "Let me see." });
+    await take(events, 3);
+    calls.update(actor, { botId: "bot", callId: "call1", keepHandoff: true });
+    await calls.end(actor, "call1");
+    expect(kept.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: "user", text: "What does the card change?" },
+      { role: "bot", text: "Let me see." },
+    ]);
   });
 
   it("keeps small talk in the call's card and leaves handoffs to the bot's turns", async () => {

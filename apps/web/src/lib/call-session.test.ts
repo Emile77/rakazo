@@ -570,19 +570,23 @@ describe("call session", () => {
       expect.objectContaining({ messageId: "message-1" }),
     );
 
+    // Words that neither approve nor deny leave the card waiting and ask again.
     endCall();
     await approvalWait(turn, approval);
     const listens = listen.mock.calls.length;
-    await heard("yes");
+    await heard("what would it open exactly?");
     expect(answer).not.toHaveBeenCalled();
     expect(getSnapshot()).toMatchObject({
       phase: "listening",
-      caption: "Approve or deny it on screen.",
+      caption: "The card is still waiting. Say approve or deny, or use the card on screen.",
     });
     expect(listen.mock.calls.length).toBeGreaterThan(listens);
-    await heard("bye");
-    expect(answer).not.toHaveBeenCalled();
-    expect(getSnapshot()).toBeNull();
+
+    // A clear spoken yes approves it.
+    await heard("yes, approve it");
+    expect(answer).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", messageId: "approval-1", answer: "allow" }),
+    );
   });
 
   it("never reads an approval that was pending before the caller spoke as the reply", async () => {
@@ -1460,7 +1464,7 @@ async function approvalWait(turn: ThreadMessage, approval: ThreadMessage) {
   getThread.mockResolvedValue(snapshot([turn, approval], waitingRun) as never);
   await heard("check the site");
   expect(speak).toHaveBeenLastCalledWith(
-    "Open example.com?. Approve or deny it on screen.",
+    "Open example.com?. Say approve or deny, or use the card on screen.",
     expect.objectContaining({ messageId: "approval-1" }),
   );
   await finishSpeaking();

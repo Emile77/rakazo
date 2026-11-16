@@ -57,7 +57,10 @@ export function conversationCallInstructions(input: {
     "Never announce a result, a success or a finished action before a result arrives. Never guess facts the result does not state.",
     "When a result arrives, relay it in one or two sentences. If it says more is in the chat, say so.",
     "When an update arrives while the bot keeps working, say it in one or two short sentences, without presenting the work as done. Never describe the bot's plan yourself.",
-    "Approvals, codes and passwords are only ever entered on screen; never ask the user to say them.",
+    "",
+    "Call activity: notes that start with 'Call activity' tell you what happens in the chat during this call: what the bot writes, the steps it takes, the cards it waits on, and its errors. They are facts about this call: use them to answer the user's questions about what the bot is doing or did, without delegating. Do not read them out unprompted, except a waiting card, which you tell the user about in one or two sentences.",
+    "Approvals: when an approval card is waiting, explain what it asks from its note, in plain words, and answer questions about it from those details only. The user may approve or deny it out loud: when they clearly decide, delegate their decision in their own words, for example 'approve' or 'deny'. Never decide for them, and if their answer is unclear, ask again. 'Always allow' is only given on screen.",
+    "Codes and passwords are only ever typed on screen; never ask the user to say them.",
   ].join("\n");
 }
 
@@ -116,6 +119,8 @@ export function createConversationTranscript() {
   let keptTo = 0;
   /** What the talker's next line will be, when a handoff or a result already decided it. */
   let nextBotPart: "ack" | "relay" | null = null;
+  /** The lines the newest handoff claimed, until the bot takes it or gives it back. */
+  let lastClaim: number[] = [];
   return {
     hear(
       role: CallExchange["role"],
@@ -153,6 +158,8 @@ export function createConversationTranscript() {
         nextBotPart = null;
       }
       lines.push({ role, text: delta, part, endMs: timing.endMs });
+      // The acknowledgement belongs to the newest handoff, which may still be given back.
+      if (part === "ack") lastClaim.push(lines.length - 1);
       return { line: lines.length - 1 };
     },
     /**
@@ -161,17 +168,42 @@ export function createConversationTranscript() {
      */
     claimRequest(): string {
       const from = Math.max(claimedTo, keptTo);
+      lastClaim = [];
       const fresh = lines.slice(from).filter((line) => line.role === "user");
       for (const line of fresh) line.part = "request";
+      lines.forEach((line, index) => {
+        if (index >= from && line.role === "user") lastClaim.push(index);
+      });
       // The talker's acknowledgement belongs to the handoff: already said when the
       // handoff came late, else its next line.
       const last = lines.at(-1);
-      if (last?.role === "bot" && fresh.length > 0 && last.part === "talk") last.part = "ack";
-      else nextBotPart = "ack";
+      if (last?.role === "bot" && fresh.length > 0 && last.part === "talk") {
+        last.part = "ack";
+        lastClaim.push(lines.length - 1);
+      } else nextBotPart = "ack";
       claimedTo = lines.length;
       const words = fresh.map((line) => line.text.trim()).filter(Boolean);
       if (words.length > 0) return words.join(" ");
       return lines.findLast((line) => line.role === "user")?.text.trim() ?? "";
+    },
+    /**
+     * The newest handoff never became a turn in the chat (the words were not a decision for a
+     * waiting card, or sending them failed): its lines become small talk again, so the chat still
+     * keeps them. Returns those already past the kept mark, which the caller writes at once.
+     */
+    release(): CallExchange[] {
+      const late: CallExchange[] = [];
+      for (const index of lastClaim) {
+        const line = lines[index];
+        if (!line || (line.part !== "request" && line.part !== "ack")) continue;
+        line.part = "talk";
+        if (index < keptTo && line.text.trim()) {
+          late.push({ role: line.role, text: line.text.trim() });
+        }
+      }
+      if (nextBotPart === "ack") nextBotPart = null;
+      lastClaim = [];
+      return late;
     },
     /** The talker is about to say the bot's result, which the bot's reply already holds. */
     relaying() {

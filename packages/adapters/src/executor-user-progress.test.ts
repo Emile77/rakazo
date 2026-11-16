@@ -831,10 +831,6 @@ describe("notes that can't be posted as messages", () => {
       ok: true,
       note: `This update was not posted because the turn just started. Keep working and put anything the person needs in your final reply. Once the turn has run ${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds, a later update can be posted.`,
     };
-    const stop = {
-      ok: true,
-      note: "This update was not posted. The chat already has enough interim messages for this run. Do not send more progress updates — keep working and put everything in your final reply.",
-    };
     // The start message posts at once; a fresh turn holds what follows it.
     expect(await update()).toEqual({ result: { ok: true }, sent: ["On it, checking now."] });
     expect(await update({ earlier: ["Starting."] })).toEqual({
@@ -844,7 +840,11 @@ describe("notes that can't be posted as messages", () => {
 
     const earlier = ["One.", "Two.", "Three."];
     const longTurn = new Date(Date.now() - 120_000);
-    expect(await update({ startedAt: longTurn, earlier })).toEqual({ result: stop, sent: earlier });
+    // A long turn has no cap on the updates the bot chooses to send.
+    expect(await update({ startedAt: longTurn, earlier })).toEqual({
+      result: { ok: true },
+      sent: [...earlier, "On it, checking now."],
+    });
     // The person's message restarts the budget, so after the answer the turn is fresh again.
     expect(
       await update({ startedAt: longTurn, earlier: [...earlier, "Yes, still on it."], steerAt: 3 }),
@@ -1483,16 +1483,15 @@ describe("a message from the person while the bot works", () => {
           yield { type: "done", text: "" };
         },
       });
-      // Each of the first three messages restarts the budget: its answer plus two updates. The
-      // fourth is answered, but its updates stay within the exhausted budget.
-      expect(sentTexts(messages)).toEqual([
-        ...[1, 2, 3].flatMap((index) => [
+      // Every message is answered, and on a long turn the updates the bot chooses to send have
+      // no cap, even after the person's fourth message.
+      expect(sentTexts(messages)).toEqual(
+        [1, 2, 3, 4].flatMap((index) => [
           `Answer ${index}.`,
           `Update ${index}a.`,
           `Update ${index}b.`,
         ]),
-        "Answer 4.",
-      ]);
+      );
     } finally {
       now.mockRestore();
     }

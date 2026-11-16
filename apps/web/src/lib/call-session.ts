@@ -11,6 +11,7 @@ import {
   CALL_FAREWELL_TIMEOUT_MS,
   callClientNonce,
   callTurn,
+  createCallActivity,
   createCallSendTracker,
   createInterimBargeIn,
   errorStatus,
@@ -131,8 +132,10 @@ let micOpen = false;
 let bargedIn = false;
 /** A turn is in flight: its reply must be spoken even if the mic reopened meanwhile. */
 let awaitingReply = false;
-/** The run whose approval card the caller was sent to answer on screen. */
+/** The run whose approval card the caller was asked about; its next reply answers the call. */
 let approvalRunId: string | null = null;
+/** What the live voice was already told about the chat during this call. */
+let activity = createCallActivity();
 let awaitedRunId: string | null = null;
 const finishedRunIds = new Set<string>();
 /** The caller's voice may hold a live conversation instead of taking turns. */
@@ -214,6 +217,7 @@ export function startCall(call: {
   approvalRunId = null;
   awaitedRunId = null;
   finishedRunIds.clear();
+  activity = createCallActivity();
   state = {
     botId: call.botId,
     botName: call.botName,
@@ -342,6 +346,9 @@ async function converse(botId: string, opening: string) {
     live.audio = audio;
     audio.setMuted(state.muted);
     if (opening) sayInCall(opening);
+    // From here the voice hears about everything the chat shows, starting with a card that was
+    // already waiting when the call connected.
+    activity.start(thread);
     reactToThread();
   } catch (error) {
     if (conversation !== live || callId !== connectingCallId || !state) return;
@@ -417,6 +424,29 @@ function sayInCall(text: string, handoffId?: string, progress?: boolean) {
       say: { text, ...(handoffId ? { handoffId } : {}), ...(progress ? { progress } : {}) },
     })
     .catch((error) => reportClientError(error, "voice.conversation"));
+}
+
+/** The newest handoff never became a chat turn: the chat keeps its words as small talk. */
+function keepHandoff() {
+  if (!state) return;
+  void rpc.threads
+    .updateCall({ botId: state.botId, callId, keepHandoff: true })
+    .catch((error) => reportClientError(error, "voice.conversation"));
+}
+
+/**
+ * Tells the live voice, quietly, what changed in the chat: the bot's messages and steps, the
+ * cards it waits on (an approval in full), what the user typed, and errors. Replies the voice
+ * is already saying are left out.
+ */
+function noteActivity() {
+  if (!state || !conversation?.audio || !activity.started) return;
+  const { botId } = state;
+  for (const note of activity.notes(thread, { callId, skip: spokenMessageIds })) {
+    void rpc.threads
+      .updateCall({ botId, callId, note })
+      .catch((error) => reportClientError(error, "voice.conversation"));
+  }
 }
 
 /** Holds the caller's audio while the bot waits on a code typed on screen. */
@@ -881,15 +911,19 @@ async function handleTranscript(text: string) {
   const callFeed = feed;
   const turnCallId = callId;
   const closing = isFarewell(text);
-  // An approval is only answered on screen, next to its details; a spoken reply would be refused.
-  if (turn.kind === "approve_on_screen") {
-    // The caption covers a card the call never read; once tapped, it must not pass for the reply.
+  // A clear spoken yes or no answers an approval (callTurn); anything else leaves the card
+  // waiting, the caller is asked again, and the chat still keeps what they said.
+  if (turn.kind === "approval_unclear") {
+    // The caption covers a card the call already told; once answered, it must not pass for the reply.
     spokenMessageIds.add(turn.messageId);
     approvalRunId = turn.runId;
     awaitingReply = true;
     if (closing) hangUpAfterReply = true;
-    if (conversation) sayInCall(t`Approve or deny it on screen.`, handoffId);
-    else set({ heard: "", caption: t`Approve or deny it on screen.` });
+    const again = t`The card is still waiting. Say approve or deny, or use the card on screen.`;
+    if (conversation) {
+      keepHandoff();
+      sayInCall(again, handoffId);
+    } else set({ heard: "", caption: again });
     void listen();
     return;
   }
@@ -931,7 +965,10 @@ async function handleTranscript(text: string) {
     if (!state || state.botId !== botId || callId !== turnCallId) return;
     awaitingReply = false;
     set({ caption: errorText(error, t`Could not send that`) });
-    if (conversation) sayInCall(errorText(error, t`Could not send that`), handoffId);
+    if (conversation) {
+      keepHandoff();
+      sayInCall(errorText(error, t`Could not send that`), handoffId);
+    }
     void listen();
     return;
   } finally {
@@ -968,6 +1005,8 @@ function reactToThread() {
   if (!state || state.phase === "ringing" || openingPending) return;
   // The bot already said goodbye: neither its marker nor the work it files after it is spoken.
   if (botEndedCall) return;
+  // After this pass decides what is said as a reply, so a reply is not also a note.
+  queueMicrotask(noteActivity);
   if (conversation) holdConversationAudio(pendingCallSecretAsk(thread));
   else if (pendingCallSecretAsk(thread)) {
     dictation.stop("cancel");
@@ -999,8 +1038,8 @@ function reactToThread() {
     if (text) {
       // Never spoken again, interrupted or not.
       spokenMessageIds.add(lastBot.id);
-      // An approval is answered on screen, which sends no turn: keep waiting for the reply
-      // its run writes next.
+      // An approval answered on screen sends no turn: keep waiting for the reply its run
+      // writes next, whichever way it is answered.
       approvalRunId = approvalAsk ? (lastBot.runId ?? null) : null;
       awaitingReply = approvalRunId !== null;
       // A live call keeps going while the code is typed; a turn-taking call must hang up first.
@@ -1010,7 +1049,7 @@ function reactToThread() {
       const spoken = secretAsk
         ? `${text}. ${codeHint}`
         : approvalAsk
-          ? `${text}. ${t`Approve or deny it on screen.`}`
+          ? `${text}. ${t`Say approve or deny, or use the card on screen.`}`
           : ask
             ? `${text}. ${t`Say yes or no, or answer in a sentence.`}`
             : text;
