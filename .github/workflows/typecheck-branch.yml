@@ -1,7 +1,7 @@
-name: "ci: temp typecheck"
+name: typecheck-branch
 on:
   push:
-    branches: [ci/typecheck-aware]
+    branches: ["ci/typecheck-*"]
 permissions:
   contents: read
 jobs:
