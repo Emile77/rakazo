@@ -92,6 +92,7 @@ function builtinParameters(tool: ConnectorTool) {
       instructions: Type.Optional(Type.String()),
       model_provider: Type.Optional(Type.String()),
       model_id: Type.Optional(Type.String()),
+      required_tools: Type.Optional(Type.Array(Type.String())),
       background: Type.Optional(Type.Boolean()),
     });
   }

@@ -5,6 +5,7 @@ import { builtinAgentTools } from "./builtin-tools.js";
 const fakeAgentState = vi.hoisted(() => ({
   mode: "dispatch" as
     | "dispatch"
+    | "execution-continuity"
     | "empty"
     | "answer-then-stop"
     | "two-boundaries"
@@ -96,6 +97,31 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
     async prompt(prompt: string, images?: unknown[]) {
       fakeAgentState.promptInputs.push(prompt);
       fakeAgentState.promptImages.push(images ?? []);
+      if (fakeAgentState.mode === "execution-continuity") {
+        const tool = this.tools.find((item) => item.name === "execution_state");
+        if (!tool) throw new Error("execution_state not offered");
+        const args = fakeAgentState.invoke.args;
+        const result = await tool.execute("state-1", args);
+        this.emit({
+          type: "tool_execution_end",
+          toolName: "execution_state",
+          toolCallId: "state-1",
+          result,
+          isError: false,
+        });
+        // A model that repeatedly reports a milestone instead of continuing.
+        for (let i = 0; i < 5; i++) {
+          this.emit({
+            type: "turn_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Tests pass, implementation remains." }],
+            },
+            toolResults: [],
+          });
+        }
+        return;
+      }
       if (fakeAgentState.mode === "answer-then-stop") {
         // The model answers the steered message in text and stops.
         await this.prepareNextTurn();
@@ -385,7 +411,12 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
 
       const delegation = this.tools.find((tool) => tool.name === "run_subagent");
       if (delegation && fakeAgentState.mode === "background-subagent") {
-        const args = { name: "scout", task: "compare the venues", background: true };
+        const args = {
+          name: "scout",
+          task: "compare the venues",
+          background: true,
+          required_tools: ["web_search"],
+        };
         this.emit({ type: "tool_execution_start", toolName: delegation.name, args });
         // Pi prepares the model's arguments before it runs the tool.
         await delegation.execute("delegate-bg", delegation.prepareArguments?.(args) ?? args);
@@ -2324,7 +2355,12 @@ describe("Pi connector tool dispatch", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.slice(0, 2)).toEqual([
       "run_subagent",
-      expect.objectContaining({ name: "scout", task: "compare the venues", background: true }),
+      expect.objectContaining({
+        name: "scout",
+        task: "compare the venues",
+        background: true,
+        required_tools: ["web_search"],
+      }),
     ]);
     // No helper ran inside this turn.
     expect(events.filter((event) => (event as { type?: string }).type === "subagent")).toEqual([]);
@@ -2873,3 +2909,42 @@ describe("Pi connector tool dispatch", () => {
     );
   });
 });
+
+it.each(["working", "waiting", "blocked", "completed"])(
+  "runtime continues only explicit working intent (%s)",
+  async (status) => {
+    fakeAgentState.followUpMessages = [];
+    fakeAgentState.mode = "execution-continuity";
+    fakeAgentState.invoke.args = {
+      status,
+      objective: "Implement",
+      next_step: "Run tests",
+      evidence: "Verified dependency or result",
+    };
+    const runtime = new PiAgentRuntime();
+    const stateTool = builtinAgentTools.find((tool) => tool.name === "execution_state")!;
+    for await (const _event of runtime.run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: `continuity-${status}`,
+        prompt: "Implement",
+        instructions: "Work",
+        history: [],
+        tools: [stateTool],
+        model: { provider: "test", id: "dispatch-test-model" },
+        executeTool: vi.fn(async (_name, args) => ({ execution: args })),
+      },
+      {
+        operationId: `continuity-${status}`,
+        traceId: "continuity",
+        spaceId: "w",
+        userId: "u",
+        signal: new AbortController().signal,
+      },
+    )) {
+      /* drain */
+    }
+    expect(fakeAgentState.followUpMessages).toHaveLength(status === "working" ? 3 : 0);
+  },
+);

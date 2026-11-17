@@ -317,3 +317,37 @@ describe("sending files to another bot", () => {
     });
   });
 });
+
+describe("durable execution state", () => {
+  it("writes a bot-scoped, replay-safe scratchpad checkpoint", async () => {
+    const { ctx } = context("computer-team");
+    const upsert = vi.fn(async () => ({}));
+    Object.assign(ctx.deps.prisma, { scratchpadItem: { upsert } });
+    Object.assign(ctx, { runId: "run-1" });
+    const state = { status: "working", objective: "Implement", next_step: "Test", evidence: "" };
+    expect(await messagingTools.execution_state(ctx, callWith("execution_state", state))).toEqual({
+      execution: state,
+    });
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "execution-run-1", spaceId: "space-1", botId: "bot-coder" },
+        update: expect.objectContaining({ status: "open", title: "Implement" }),
+      }),
+    );
+    await messagingTools.execution_state(
+      ctx,
+      callWith("execution_state", { ...state, status: "completed", evidence: "Tests passed" }),
+    );
+    expect(upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ status: "done" }) }),
+    );
+  });
+  it("does not write an invalid completion", async () => {
+    const { ctx } = context("computer-team");
+    const result = await messagingTools.execution_state(
+      ctx,
+      callWith("execution_state", { status: "completed" }),
+    );
+    expect(result).toHaveProperty("error");
+  });
+});

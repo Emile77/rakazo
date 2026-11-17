@@ -16,6 +16,7 @@ import { startBackgroundHelper } from "./background-helpers.js";
 import { messageBot } from "./bot-messages.js";
 import { endCallFromTool, requestUserCall } from "./call-request.js";
 import { normalizeWorkspacePath, resolveBotWorkspacePath } from "./computer-support.js";
+import { parseExecutionState } from "./execution-continuity.js";
 import { handoffToGroupBot } from "./group-handoff.js";
 import type { RunContext } from "./run-context.js";
 import {
@@ -236,11 +237,52 @@ export const messagingTools: ToolHandlers = {
   async request_takeover() {
     return { ok: true };
   },
+  async execution_state(ctx, call) {
+    const execution = parseExecutionState(
+      JSON.parse(redactSecrets(JSON.stringify(call.args), ctx.secrets)),
+    );
+    if (execution) {
+      const data = {
+        title: execution.objective.slice(0, 200),
+        status:
+          execution.status === "completed"
+            ? "done"
+            : execution.status === "waiting"
+              ? "parked"
+              : "open",
+        notes:
+          `Execution state: ${execution.status}\nNext: ${execution.next_step}\nEvidence (model-reported; verify before acting): ${execution.evidence}`.slice(
+            0,
+            4000,
+          ),
+      };
+      await ctx.deps.prisma.scratchpadItem.upsert({
+        where: { id: `execution-${ctx.runId}`, spaceId: ctx.run.spaceId, botId: ctx.bot.id },
+        create: {
+          id: `execution-${ctx.runId}`,
+          spaceId: ctx.run.spaceId,
+          botId: ctx.bot.id,
+          userId: ctx.run.userId,
+          ...data,
+        },
+        update: data,
+      });
+    }
+    return call.finish(
+      execution
+        ? { execution }
+        : {
+            error:
+              "Invalid execution state. Provide objective, next_step for working, and evidence for waiting, blocked or completed.",
+          },
+    );
+  },
   async run_subagent(ctx, call) {
     const { args } = call;
     if (args.background === true) {
       return call.finish(
         await startBackgroundHelper(ctx, {
+          requiredTools: args.required_tools,
           name:
             String(args.name ?? "helper")
               .trim()

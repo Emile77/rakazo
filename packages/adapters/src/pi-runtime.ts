@@ -33,6 +33,7 @@ import {
 } from "./approval-effect.js";
 import { automated, withAutomatedLabels } from "./automated-messages.js";
 import { withCloudflareAuth } from "./cloudflare-ai-gateway.js";
+import { ExecutionContinuity } from "./execution-continuity.js";
 import { neutralizeSpeakerLabels } from "./history-speakers.js";
 import { estimatePiImageTokens } from "./pi-image-context.js";
 import {
@@ -831,11 +832,33 @@ export class PiAgentRuntime implements AgentRuntime {
           streamed += text;
           queue.push({ type: "text", text });
         };
+        const executionContinuity = new ExecutionContinuity();
+        // Only this run's checkpoint is authoritative; old chat tasks must not restart.
+        if (restored)
+          for (const message of restored.messages) {
+            if (message.role === "user" && typeof message.content === "string") {
+              executionContinuity.restoreContinuation(message.content);
+            }
+            if (
+              message.role === "toolResult" &&
+              message.toolName === "execution_state" &&
+              !message.isError
+            ) {
+              executionContinuity.accept(message.details);
+            }
+          }
         let toolWorkPendingFinal = false;
         // Text streamed before this point is tool-turn narration. Only text after
         // it counts as the final reply, including when the completed message omits it.
         let streamedBeforePendingFinal = 0;
         agent.subscribe(async (event) => {
+          if (
+            event.type === "tool_execution_end" &&
+            event.toolName === "execution_state" &&
+            !event.isError
+          ) {
+            executionContinuity.accept(event.result.details);
+          }
           if (event.type === "tool_execution_end" && isTerminatingReplyResult(event.result)) {
             terminatedReply = terminatingReplyText(event.result) ?? terminatedReply;
           }
@@ -913,6 +936,23 @@ export class PiAgentRuntime implements AgentRuntime {
               event.message.role === "assistant" ? assistantText(event.message) : "";
             const hasToolCalls = messageHasToolCall(event.message);
             const hasToolResults = event.toolResults.length > 0;
+            if (
+              !hasToolCalls &&
+              messageText.trim() &&
+              !providerFailureText(event.message) &&
+              !host.pausePending &&
+              !signal.aborted &&
+              !host.toolCallBudget.exceeded &&
+              !terminatedReply
+            ) {
+              const continuation = executionContinuity.afterText();
+              if (continuation)
+                agent.followUp({
+                  role: "user",
+                  content: automated(continuation),
+                  timestamp: Date.now(),
+                });
+            }
 
             // Text in a turn that also contains a tool call is narration, not a final
             // response. Keep the run alive until a later text-only turn answers the user.

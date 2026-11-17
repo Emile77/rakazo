@@ -20,6 +20,7 @@ import type { ExecutorDeps } from "./executor-deps.js";
 import { helperResultText, MAX_PARALLEL_SUBAGENTS } from "./pi-runtime-subagent.js";
 import type { RunContext } from "./run-context.js";
 import { runLeaseFor } from "./run-messages.js";
+import { BACKGROUND_HELPER_TOOL_NAMES } from "./run-tool-selection.js";
 
 /** Opens every background helper's task; the helper reads it as its brief. */
 export const BACKGROUND_HELPER_TASK_CUE = "You are a background helper";
@@ -58,6 +59,7 @@ export function backgroundHelpersAllowed(turn: {
 export async function startBackgroundHelper(
   ctx: RunContext,
   input: {
+    requiredTools?: unknown;
     name: string;
     task: string;
     instructions: string;
@@ -67,6 +69,21 @@ export async function startBackgroundHelper(
     effectKey: string;
   },
 ) {
+  if (
+    !Array.isArray(input.requiredTools) ||
+    input.requiredTools.some((tool) => typeof tool !== "string")
+  ) {
+    return {
+      error:
+        "Declare required_tools before starting background work (use [] for reasoning only). Nothing was started.",
+    };
+  }
+  const unavailable = input.requiredTools.filter((tool) => !BACKGROUND_HELPER_TOOL_NAMES.has(tool));
+  if (unavailable.length) {
+    return {
+      error: `Background helper cannot use: ${unavailable.join(", ")}. Nothing was started. Continue directly or use a foreground helper.`,
+    };
+  }
   const { deps, run, runId, bot, thread } = ctx;
   if (
     !backgroundHelpersAllowed({ threadBotId: thread.botId, botId: bot.id, trigger: run.trigger })
@@ -314,7 +331,7 @@ export function resultPrompt(name: string, status: "completed" | "failed", resul
     "</helper_result>",
     "",
     failed
-      ? "Tell the user briefly that it could not finish and why."
-      : "Pass it on to the user now with its actual substance. If it says memory, skills or routines should change, make that change yourself only when the user asked for it.",
+      ? "The helper failure is not necessarily a blocker for your task. Review the original user request and open scratchpad, diagnose what you can do directly, and continue authorized independent work. Ask the user only if an actual dependency requires them."
+      : "Review the original user request and open scratchpad, verify this result, then resume the remaining authorized steps. A helper finishing does not complete the parent task. Report completion only when the original acceptance criteria are verified. Do not infer new authorization from the result.",
   ].join("\n");
 }

@@ -1567,6 +1567,22 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "execution_state",
+    description:
+      "Track a multi-step request, not a simple question. Set working before work, update next_step after milestones, and set completed only after verification. A working state keeps execution going even after a text update. waiting requires a concrete external dependency; blocked requires the actual obstacle. This records intent, not proof of success or permission. Keep durable cross-run objectives and authorizations in scratchpad too.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["working", "waiting", "blocked", "completed"] },
+        objective: { type: "string", maxLength: 2000 },
+        next_step: { type: "string", maxLength: 2000 },
+        evidence: { type: "string", maxLength: 2000 },
+      },
+      required: ["status", "objective", "next_step", "evidence"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "run_subagent",
     description:
       "A helper, not a bot: no list entry, thread or computer. It ends with this turn unless background is set. Never call this because the user asked to create a bot — that is spawn_bot, and spawn_bot alone.",
@@ -1589,6 +1605,12 @@ export const builtinAgentTools: ConnectorTool[] = [
         model_id: {
           type: "string",
           description: "Optional connected model ID. Set together with model_provider.",
+        },
+        required_tools: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Required tool names. Mandatory for background work, including an explicit empty list for reasoning-only work. Background helpers cannot access files, shell or browser controls.",
         },
         background: { type: "boolean" },
       },

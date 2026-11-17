@@ -14,6 +14,7 @@ vi.mock("@rakazo/db", async (original) => ({
 }));
 
 const START = {
+  requiredTools: [],
   name: "scout",
   task: "compare the venues",
   instructions: "",
@@ -53,6 +54,17 @@ function harness(overrides: { trigger?: string; threadBotId?: string | null } = 
 }
 
 describe("starting a background helper", () => {
+  it.each([undefined, ["shell"], ["read_file", "web_search"], ["browser_act"], [5]])(
+    "rejects incompatible requirements %j before creating work",
+    async (requiredTools) => {
+      const h = harness();
+      const result = await startBackgroundHelper(h.ctx, { ...START, requiredTools });
+      expect(result).toHaveProperty("error");
+      expect(h.prisma.$transaction).not.toHaveBeenCalled();
+      expect(h.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
   it("starts one from the owner's own chat and queues its run", async () => {
     const h = harness();
     await expect(startBackgroundHelper(h.ctx, START)).resolves.toMatchObject({ ok: true });
