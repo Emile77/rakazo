@@ -1,4 +1,5 @@
 import type { ConversationCallEvent } from "@rakazo/contracts";
+import { startLiveConversation } from "./live-conversation.js";
 import { rpc } from "./rpc.js";
 
 /** Output level above which the voice counts as speaking. */
@@ -13,11 +14,15 @@ const SPEAKING_HANGOVER_MS = 600;
  * carries audio and reports what it hears.
  */
 export interface ConversationAudio {
+  shareVisual?(kind: "camera" | "screen" | null): Promise<void>;
+  sendText?(text: string): Promise<void>;
   setMuted(muted: boolean): void;
   close(): void;
 }
 
-export async function startConversation(input: {
+export interface ConversationInput {
+  onVisual?: (kind: "camera" | "screen" | null) => void;
+  onUserTranscript?: (text: string) => void;
   botId: string;
   callId: string;
   /** The voice greets first; false when the call has its own opening to say. */
@@ -27,7 +32,20 @@ export async function startConversation(input: {
   onSpeaking: (speaking: boolean) => void;
   /** The feed stopped without the call ending: the API lost the conversation. */
   onLost: (error: unknown) => void;
-}): Promise<ConversationAudio> {
+}
+
+export async function startConversation(input: ConversationInput): Promise<ConversationAudio> {
+  const selection = await rpc.liveMedia.settings(undefined, { signal: input.signal });
+  if (selection) {
+    const models = await rpc.models.liveModels(
+      { credentialId: selection.credentialId },
+      { signal: input.signal },
+    );
+    return startLiveConversation(
+      input,
+      Boolean(models.find((model) => model.id === selection.model)?.capabilities?.imageInput),
+    );
+  }
   const { botId, callId, signal } = input;
   const microphone = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },

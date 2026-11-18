@@ -316,6 +316,13 @@ const YES = new RegExp(`^¡?(${YES_WORDS})${WORD_END}`, "iu");
 const NO = new RegExp(`^¡?(${NO_WORDS})${WORD_END}`, "iu");
 const NO_ANYWHERE = new RegExp(`(?<![\\p{L}\\p{N}])(${NO_WORDS})${WORD_END}`, "iu");
 
+// French decisions are whole utterances, not prefixes: "oui, mais ..." is not consent.
+// In particular, durable permission ("toujours") stays an on-screen choice.
+const FRENCH_YES =
+  /^(?:oui(?:[, ]+(?:j'approuve|j'autorise|je confirme|vas-y))?|j'approuve(?: (?:cette action|la demande))?|j'autorise(?: (?:cette action|la demande))?|je confirme|approuve|autorise|vas-y)(?:[, ]+(?:merci|s'il te pla[iî]t))?[.!]*$/iu;
+const FRENCH_NO =
+  /^(?:non(?:[, ]+(?:je refuse|annule|refuse))?|je refuse(?: (?:cette action|la demande))?|annule(?: (?:cette action|la demande))?|refuse|n'approuve pas|n'autorise pas)(?:[, ]+(?:merci|s'il te pla[iî]t))?[.!]*$/iu;
+
 /** Consent must never be inferred from a sentence that merely contained "sure". */
 export function spokenDecision(transcript: string): "yes" | "no" | null {
   const text = transcript.trim().replace(/[\u2018\u2019]/g, "'");
@@ -323,6 +330,8 @@ export function spokenDecision(transcript: string): "yes" | "no" | null {
   if (!text || /[?¿]/.test(text) || text.split(/\s+/).length > 6) return null;
   // "okay, do not" opens with a yes and means no. Only a yes can be wrong in a way that acts, so
   // a yes that also says no is no answer; a no that says "do it" ("don't do it") stays a no.
+  if (FRENCH_YES.test(text)) return "yes";
+  if (FRENCH_NO.test(text)) return "no";
   if (YES.test(text)) return NO_ANYWHERE.test(text) ? null : "yes";
   if (NO.test(text)) return "no";
   return null;

@@ -57,6 +57,8 @@ export interface CallState {
   connectedAt: number | null;
   phase: CallPhase;
   muted: boolean;
+  visualAvailable?: boolean;
+  visual?: "camera" | "screen" | null;
   /** The call window is tucked away; the call keeps running. */
   minimized: boolean;
   transcriptOpen: boolean;
@@ -273,10 +275,14 @@ export function startCall(call: {
   pickup = ringing;
   const ringingCallId = callId;
   const opening = call.answered?.opening.trim() ?? "";
-  void pickUp(ringing.signal, { ring: !call.answered }).then(() => {
+  void pickUp(ringing.signal, { ring: !call.answered }).then(async () => {
     if (ringing.signal.aborted || !state || callId !== ringingCallId) return;
     pickup = null;
-    if (conversable) {
+    const configured = await rpc.liveMedia
+      .settings(undefined, { signal: ringing.signal })
+      .catch(() => null);
+    if (ringing.signal.aborted || !state || callId !== ringingCallId) return;
+    if (conversable || configured) {
       void converse(call.botId, opening);
       return;
     }
@@ -329,6 +335,12 @@ async function converse(botId: string, opening: string) {
       onEvent: (event) => {
         if (conversation === live) hearConversation(event);
       },
+      onVisual: (kind) => {
+        if (conversation === live) set({ visual: kind });
+      },
+      onUserTranscript: (text) => {
+        if (conversation === live && state?.approval) void handleTranscript(text);
+      },
       onSpeaking: (speaking) => {
         if (conversation === live) conversationSpeaking(speaking);
       },
@@ -344,6 +356,7 @@ async function converse(botId: string, opening: string) {
       return;
     }
     live.audio = audio;
+    set({ visualAvailable: Boolean(audio.shareVisual) });
     audio.setMuted(state.muted);
     if (opening) sayInCall(opening);
     // From here the voice hears about everything the chat shows, starting with a card that was
@@ -417,6 +430,12 @@ function conversationSpeaking(speaking: boolean) {
 /** Gives the live voice something to say; it words it itself, in the caller's language. */
 function sayInCall(text: string, handoffId?: string, progress?: boolean) {
   if (!state) return;
+  if (conversation?.audio?.sendText) {
+    void conversation.audio
+      .sendText(text)
+      .catch((error) => reportClientError(error, "voice.conversation"));
+    return;
+  }
   void rpc.threads
     .updateCall({
       botId: state.botId,
@@ -428,7 +447,7 @@ function sayInCall(text: string, handoffId?: string, progress?: boolean) {
 
 /** The newest handoff never became a chat turn: the chat keeps its words as small talk. */
 function keepHandoff() {
-  if (!state) return;
+  if (!state || conversation?.audio?.sendText) return;
   void rpc.threads
     .updateCall({ botId: state.botId, callId, keepHandoff: true })
     .catch((error) => reportClientError(error, "voice.conversation"));
@@ -443,6 +462,12 @@ function noteActivity() {
   if (!state || !conversation?.audio || !activity.started) return;
   const { botId } = state;
   for (const note of activity.notes(thread, { callId, skip: spokenMessageIds })) {
+    if (conversation.audio.sendText) {
+      void conversation.audio
+        .sendText("Thread context (not a new request): " + JSON.stringify(note))
+        .catch((error) => reportClientError(error, "voice.conversation"));
+      continue;
+    }
     void rpc.threads
       .updateCall({ botId, callId, note })
       .catch((error) => reportClientError(error, "voice.conversation"));
@@ -454,6 +479,7 @@ function holdConversationAudio(hold: boolean) {
   if (!state || !conversation || conversation.holdingAudio === hold) return;
   conversation.holdingAudio = hold;
   conversation.audio?.setMuted(hold || state.muted);
+  if (conversation.audio?.sendText) return;
   void rpc.threads
     .updateCall({ botId: state.botId, callId, listening: !hold })
     .catch((error) => reportClientError(error, "voice.conversation"));
@@ -1131,4 +1157,15 @@ function replyFinished(message: ThreadMessage) {
 
 function runActive(snapshot: ThreadSnapshot | null) {
   return Boolean(snapshot?.run && RUN_ACTIVE.includes(snapshot.run.status));
+}
+
+export async function shareCallVisual(kind: "camera" | "screen" | null) {
+  const live = conversation;
+  if (!state || !live?.audio?.shareVisual) return;
+  try {
+    await live.audio.shareVisual(kind);
+    if (conversation === live) set({ visual: kind });
+  } catch (error) {
+    if (conversation === live) set({ visual: null, caption: errorText(error) });
+  }
 }

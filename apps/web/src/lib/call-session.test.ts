@@ -57,6 +57,7 @@ vi.mock("./conversation-call.js", () => ({
 vi.mock("./rpc.js", () => ({
   recheckSessionOnUnauthorized: vi.fn(),
   rpc: {
+    liveMedia: { settings: vi.fn(async () => null) },
     threads: {
       answer: vi.fn(),
       updateCall: vi.fn(async () => ({ ok: true })),
@@ -548,46 +549,49 @@ describe("call session", () => {
     );
   });
 
-  it("speaks only an approval's own reply to the tap, and keeps spoken answers off it", async () => {
-    const turn = callerMessage("check the site");
-    const approval = approvalMessage();
-    const note = { ...botMessage("note-1", "Daily summary ready"), runId: "run-9" };
-    const feed = await approvalWait(turn, approval);
+  it.each(["yes, approve it", "Oui, j’approuve."])(
+    "speaks only an approval's own reply, and accepts %j",
+    async (decision) => {
+      const turn = callerMessage("check the site");
+      const approval = approvalMessage();
+      const note = { ...botMessage("note-1", "Daily summary ready"), runId: "run-9" };
+      const feed = await approvalWait(turn, approval);
 
-    // Another run posting meanwhile is not the reply.
-    getThread.mockResolvedValue(snapshot([turn, approval, note], waitingRun) as never);
-    await feed?.refresh();
-    expect(speak).toHaveBeenCalledTimes(1);
+      // Another run posting meanwhile is not the reply.
+      getThread.mockResolvedValue(snapshot([turn, approval, note], waitingRun) as never);
+      await feed?.refresh();
+      expect(speak).toHaveBeenCalledTimes(1);
 
-    // Allow on screen sends no turn; the resumed run's reply is still this call's to speak.
-    getThread.mockResolvedValue(
-      snapshot([turn, answered(approval), note, botMessage("message-1", "Fetched it.")]) as never,
-    );
-    await feed?.refresh();
-    expect(speak).toHaveBeenCalledTimes(2);
-    expect(speak).toHaveBeenLastCalledWith(
-      "Fetched it.",
-      expect.objectContaining({ messageId: "message-1" }),
-    );
+      // Allow on screen sends no turn; the resumed run's reply is still this call's to speak.
+      getThread.mockResolvedValue(
+        snapshot([turn, answered(approval), note, botMessage("message-1", "Fetched it.")]) as never,
+      );
+      await feed?.refresh();
+      expect(speak).toHaveBeenCalledTimes(2);
+      expect(speak).toHaveBeenLastCalledWith(
+        "Fetched it.",
+        expect.objectContaining({ messageId: "message-1" }),
+      );
 
-    // Words that neither approve nor deny leave the card waiting and ask again.
-    endCall();
-    await approvalWait(turn, approval);
-    const listens = listen.mock.calls.length;
-    await heard("what would it open exactly?");
-    expect(answer).not.toHaveBeenCalled();
-    expect(getSnapshot()).toMatchObject({
-      phase: "listening",
-      caption: "The card is still waiting. Say approve or deny, or use the card on screen.",
-    });
-    expect(listen.mock.calls.length).toBeGreaterThan(listens);
+      // Words that neither approve nor deny leave the card waiting and ask again.
+      endCall();
+      await approvalWait(turn, approval);
+      const listens = listen.mock.calls.length;
+      await heard("what would it open exactly?");
+      expect(answer).not.toHaveBeenCalled();
+      expect(getSnapshot()).toMatchObject({
+        phase: "listening",
+        caption: "The card is still waiting. Say approve or deny, or use the card on screen.",
+      });
+      expect(listen.mock.calls.length).toBeGreaterThan(listens);
 
-    // A clear spoken yes approves it.
-    await heard("yes, approve it");
-    expect(answer).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: "run-1", messageId: "approval-1", answer: "allow" }),
-    );
-  });
+      // A clear spoken yes approves it.
+      await heard(decision);
+      expect(answer).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: "run-1", messageId: "approval-1", answer: "allow" }),
+      );
+    },
+  );
 
   it("never reads an approval that was pending before the caller spoke as the reply", async () => {
     const turn = callerMessage("check the site");

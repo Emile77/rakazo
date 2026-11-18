@@ -8,6 +8,7 @@ import {
   answerCallApproval,
   endCall,
   setCallMinimized,
+  shareCallVisual,
   toggleMute,
   toggleTranscript,
   useCallSession,
@@ -83,6 +84,23 @@ export function CallCard({ onSettings }: { onSettings: () => void }) {
           <ChevronDown />
         </Button>
         <span className="flex-1" />
+        {call.visualAvailable && (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={call.visual === "camera"}
+              onClick={() => void shareCallVisual(call.visual === "camera" ? null : "camera")}
+            >{t`Camera`}</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={call.visual === "screen"}
+              onClick={() => void shareCallVisual(call.visual === "screen" ? null : "screen")}
+            >{t`Screen`}</Button>
+          </>
+        )}
+
         <Button
           variant="ghost"
           size="icon"
@@ -166,7 +184,6 @@ export function CallCard({ onSettings }: { onSettings: () => void }) {
           </div>
         ) : null}
       </div>
-
       {call.transcriptOpen ? (
         <div className="mb-4 flex flex-col gap-1.5 border-t border-border pt-2.5 text-body leading-[1.45]">
           {call.exchanges.slice(-TRANSCRIPT_LINES).map((exchange, index) => (
@@ -192,7 +209,6 @@ export function CallCard({ onSettings }: { onSettings: () => void }) {
           {call.caption}
         </p>
       ) : null}
-
       {call.approval ? (
         <fieldset
           data-testid="call-approval"

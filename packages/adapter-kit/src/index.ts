@@ -7,6 +7,7 @@ export * from "./connector-errors.js";
 export * from "./decisions.js";
 export * from "./email-errors.js";
 export * from "./interfaces.js";
+export * from "./live-media.js";
 export * from "./media-generation.js";
 export * from "./messaging-installations.js";
 export * from "./model-errors.js";

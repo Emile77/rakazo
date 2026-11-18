@@ -57,6 +57,7 @@ import {
 } from "../thread-target.js";
 import { mapBotSecretInputError } from "./bots.js";
 import type { RouterContext } from "./context.js";
+import { liveMediaRoutes } from "./live-media.js";
 import {
   botsRunOwnModels,
   HEARTBEAT,
@@ -166,6 +167,7 @@ export function threadsRoutes(ctx: RouterContext) {
     });
   };
   return {
+    ...liveMediaRoutes(ctx, send),
     threads: {
       head: authed.threads.head.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);

@@ -50,6 +50,7 @@ import {
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { markExpectedFailure } from "@rakazo/logging/hono";
+import { listLiveModels } from "../live-model-settings.js";
 import { mayUsePrivateEndpoint } from "../mcp-servers.js";
 import { firstModelConnectAnalytics } from "../model-connect-analytics.js";
 import {
@@ -111,6 +112,9 @@ export function modelsRoutes(ctx: RouterContext) {
     };
   return {
     models: {
+      liveModels: authed.models.liveModels.handler(async ({ context, input }) =>
+        listLiveModels(deps, context.actor, input.credentialId),
+      ),
       list: authed.models.list.handler(async ({ context }) => chatCatalog(context.actor)),
       credentials: authed.models.credentials.handler(async ({ context }) => {
         const [rows, main] = await Promise.all([

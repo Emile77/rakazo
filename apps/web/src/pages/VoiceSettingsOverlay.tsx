@@ -35,6 +35,7 @@ import { useSpaceQueries } from "../lib/query";
 import { useBoundSpaceId, useSpaceRpc } from "../lib/space-rpc";
 import { speaker } from "../lib/tts";
 import { errorText } from "../lib/user-error";
+import { LiveCallModel } from "./LiveCallModel";
 
 export function VoiceSettingsOverlay({
   onClose,
@@ -434,6 +435,7 @@ export function VoiceSettingsOverlay({
 
   const content = (
     <>
+      {scope === "account" && <LiveCallModel />}
       {loading && !catalog.length ? (
         <div className="grid place-items-center py-10">
           <Spinner

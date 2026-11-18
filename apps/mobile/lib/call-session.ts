@@ -301,6 +301,7 @@ export function startCall(
 
 /** The opening cue, then the greeting, then the caller's first turn. */
 async function openCall(openedCallId: string, greeting?: string): Promise<void> {
+  // Native PCM is unavailable: retain the existing dictation/speech call path.
   deps.waitSound("preload");
   opening = true;
   await deps.audio(true).catch((error: unknown) => {

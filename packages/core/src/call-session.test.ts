@@ -91,6 +91,18 @@ describe("call turn", () => {
   });
 
   it("answers an approval by a clear spoken yes or no, and keeps codes on screen", () => {
+    expect(callTurn(waiting([approval]), "Oui, j’approuve.")).toEqual({
+      kind: "answer",
+      messageId: "ask",
+      runId: "run-1",
+      answer: "allow",
+    });
+    expect(callTurn(waiting([approval]), "Non, merci.")).toEqual({
+      kind: "answer",
+      messageId: "ask",
+      runId: "run-1",
+      answer: "deny",
+    });
     expect(callTurn(waiting([approval]), "Yes, approve it")).toEqual({
       kind: "answer",
       messageId: "ask",

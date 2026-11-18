@@ -304,6 +304,39 @@ describe("narrateTool", () => {
 });
 
 describe("spokenDecision", () => {
+  it.each([
+    "oui",
+    "Oui, j’approuve.",
+    "j'approuve cette action",
+    "j’autorise",
+    "je confirme",
+    "vas-y",
+    "oui merci",
+  ])("accepts explicit French approval %j", (text) => {
+    expect(spokenDecision(text)).toBe("yes");
+  });
+  it.each(["non", "Non, merci.", "je refuse", "annule cette action", "n’autorise pas"])(
+    "accepts explicit French refusal %j",
+    (text) => {
+      expect(spokenDecision(text)).toBe("no");
+    },
+  );
+  it.each([
+    "oui mais attends",
+    "oui si c'est gratuit",
+    "j'approuve si tu vérifies",
+    "oui non",
+    "oui, annule",
+    "oui toujours",
+    "j'autorise toujours",
+    "j'approuve ?",
+    "il a dit oui",
+    "pas oui",
+    "je n'approuve pas",
+    "oui ne fais pas ça",
+  ])("does not infer French consent from %j", (text) => {
+    expect(spokenDecision(text)).toBeNull();
+  });
   it("accepts a clear yes or no and refuses a sentence that merely contains one", () => {
     expect(spokenDecision("yes")).toBe("yes");
     expect(spokenDecision("No thanks")).toBe("no");

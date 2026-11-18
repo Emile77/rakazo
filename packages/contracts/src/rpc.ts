@@ -524,6 +524,22 @@ export const appContract = {
       .output(ModelRoleViewSchema),
     list: oc.output(z.array(ModelCatalogEntrySchema)),
     credentials: oc.output(z.array(ModelCredentialSchema)),
+    liveModels: oc.input(z.object({ credentialId: Id })).output(
+      z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          capabilities: z
+            .object({
+              audioInput: z.boolean(),
+              audioOutput: z.boolean(),
+              imageInput: z.boolean(),
+              toolCalls: z.boolean(),
+            })
+            .optional(),
+        }),
+      ),
+    ),
     backups: oc.output(z.array(ModelBackupChoiceSchema)),
     setBackups: oc.input(ModelBackupListSchema).output(z.object({ ok: z.literal(true) })),
     connect: oc.input(ModelConnectInputSchema).output(ModelCredentialSchema),
@@ -1716,6 +1732,79 @@ export const appContract = {
         }),
       )
       .output(z.object({ ready: z.boolean(), utterances: z.array(z.string()) })),
+  },
+  liveMedia: {
+    clear: oc.output(z.object({ ok: z.literal(true) })),
+    settings: oc.output(z.object({ credentialId: Id, model: z.string() }).nullable()),
+    select: oc
+      .input(z.object({ credentialId: Id, model: z.string().min(1).max(200) }))
+      .output(z.object({ ok: z.literal(true) })),
+    connect: oc
+      .input(
+        z.object({
+          botId: Id,
+          callId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/),
+          voice: z.string().max(120).optional(),
+        }),
+      )
+      .output(z.object({ sessionId: Id })),
+    events: oc
+      .input(
+        z.object({ botId: Id, sessionId: Id, cursor: z.number().int().nonnegative().default(0) }),
+      )
+      .output(
+        z.object({
+          cursor: z.number(),
+          closed: z.boolean(),
+          events: z.array(
+            z.object({
+              seq: z.number(),
+              event: z.discriminatedUnion("type", [
+                z.object({ type: z.literal("ready") }),
+                z.object({ type: z.literal("audio"), data: z.string(), mimeType: z.string() }),
+                z.object({
+                  type: z.literal("transcript"),
+                  role: z.enum(["user", "bot"]),
+                  text: z.string(),
+                }),
+                z.object({ type: z.literal("interrupted") }),
+                z.object({ type: z.literal("turn-complete") }),
+                z.object({ type: z.literal("reconnect-needed") }),
+                z.object({ type: z.literal("closed"), failed: z.boolean() }),
+              ]),
+            }),
+          ),
+        }),
+      ),
+    input: oc
+      .input(
+        z.object({
+          botId: Id,
+          sessionId: Id,
+          input: z.discriminatedUnion("type", [
+            z.object({
+              type: z.literal("audio"),
+              data: z
+                .string()
+                .min(1)
+                .max(128_000)
+                .regex(/^[A-Za-z0-9+/]+={0,2}$/),
+            }),
+            z.object({
+              type: z.literal("frame"),
+              data: z
+                .string()
+                .min(1)
+                .max(1_400_000)
+                .regex(/^[A-Za-z0-9+/]+={0,2}$/),
+              mimeType: z.enum(["image/jpeg", "image/png"]),
+            }),
+            z.object({ type: z.literal("text"), text: z.string().min(1).max(20_000) }),
+          ]),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    end: oc.input(z.object({ botId: Id, sessionId: Id })).output(z.object({ ok: z.literal(true) })),
   },
   externalConversations: {
     updatePolicy: oc
