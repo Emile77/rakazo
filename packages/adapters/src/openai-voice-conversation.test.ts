@@ -81,10 +81,15 @@ describe("openConversation", () => {
           {
             type: "message",
             role: "developer",
-            content: [{ type: "input_text", text: conversationExcerpt([
-              { role: "user", text: "Hi" },
-              { role: "bot", text: "Hello" },
-            ]) }],
+            content: [
+              {
+                type: "input_text",
+                text: conversationExcerpt([
+                  { role: "user", text: "Hi" },
+                  { role: "bot", text: "Hello" },
+                ]),
+              },
+            ],
           },
         ],
         audio: { output: { voice: "cedar" } },

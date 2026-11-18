@@ -55,6 +55,7 @@ vi.mock("./rpc", () => ({
   clearSpaceSelection: vi.fn(),
   recheckSessionOnUnauthorized: vi.fn(),
   rpc: {
+    liveMedia: { settings: vi.fn(async () => null) },
     threads: { answerCall: mocks.answerCall, endCall: mocks.endCall, send: mocks.send },
   },
   selectedSpaceId: () => "space-1",

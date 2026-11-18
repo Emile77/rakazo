@@ -18,6 +18,11 @@ const voice = vi.hoisted(() => ({
   setLiveCalls: vi.fn(),
 }));
 
+const liveModels = vi.hoisted(() => ({
+  liveMedia: { settings: vi.fn(async () => null) },
+  models: { credentials: vi.fn(async () => []), liveModels: vi.fn(async () => []) },
+}));
+
 const { speak, activeCall } = vi.hoisted(() => ({
   speak: vi.fn(async () => undefined),
   activeCall: { current: null as { phase: string } | null },
@@ -25,9 +30,9 @@ const { speak, activeCall } = vi.hoisted(() => ({
 vi.mock("../lib/tts.js", () => ({ speaker: { speak, state: {} } }));
 vi.mock("../lib/call-session", () => ({ useCallSession: () => activeCall.current }));
 vi.mock("../lib/rpc", () => ({
-  rpc: { voice },
-  rpcForSpace: () => ({ voice }),
-  createSpaceRpc: () => ({ voice }),
+  rpc: { voice, ...liveModels },
+  rpcForSpace: () => ({ voice, ...liveModels }),
+  createSpaceRpc: () => ({ voice, ...liveModels }),
   selectedSpaceId: () => null,
 }));
 vi.mock("@lingui/react/macro", () => {

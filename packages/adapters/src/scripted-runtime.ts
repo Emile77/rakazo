@@ -716,7 +716,12 @@ code-b
     return [
       {
         assistant: "a background helper is on it; ask me anything meanwhile.",
-        toolCalls: [{ name: "run_subagent", args: { name: "helper", task, background: true } }],
+        toolCalls: [
+          {
+            name: "run_subagent",
+            args: { name: "helper", task, background: true, required_tools: [] },
+          },
+        ],
         complete: true,
       },
     ];

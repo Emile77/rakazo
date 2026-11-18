@@ -301,7 +301,9 @@ export function startCall(
 
 /** The opening cue, then the greeting, then the caller's first turn. */
 async function openCall(openedCallId: string, greeting?: string): Promise<void> {
-  // Native PCM is unavailable: retain the existing dictation/speech call path.
+  // Native duplex live transport is not integrated; retain dictation/speech.
+  // expo-audio supports PCM capture, but not a raw PCM playback queue.
+  // See ../native/LIVE_MEDIA.md for the native audio-session constraint.
   deps.waitSound("preload");
   opening = true;
   await deps.audio(true).catch((error: unknown) => {

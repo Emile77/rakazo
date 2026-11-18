@@ -2099,6 +2099,7 @@ describeJourneys("required product journeys", () => {
         } as never,
         {
           name: "scout",
+          requiredTools: task.startsWith("fetch ") ? ["web_fetch"] : [],
           task,
           instructions: "",
           modelProvider: "",

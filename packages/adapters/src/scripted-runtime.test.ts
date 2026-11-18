@@ -35,6 +35,9 @@ describe("inferScript background helpers", () => {
         (call) => call.name === "run_subagent" && call.args.background === true,
       );
     expect(started("keep working on the venue list in the background")).toBe(true);
+    expect(
+      inferScript("summarize the venue notes in the background")[0]?.toolCalls?.[0]?.args,
+    ).toMatchObject({ background: true, required_tools: [] });
     expect(started("Is the calendar sync running in the background?")).toBe(false);
   });
 
