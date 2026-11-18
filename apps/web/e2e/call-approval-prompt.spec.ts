@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import { captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
-test("a call answers each turn and sends the caller to the screen for an approval", async ({
+test("a call answers each turn and offers spoken or on-screen approval", async ({
   page,
 }, testInfo) => {
   await signup(page, `call-approval-${Date.now()}@rakazo.test`, "password12", "Call Approval");
@@ -21,7 +21,9 @@ test("a call answers each turn and sends the caller to the screen for an approva
     call.getByText("Review before web_fetch example.test.", { exact: true }),
   ).toBeVisible({ timeout: 60_000 });
   await finishClip(page);
-  await expect(call.getByText("Approve or deny it on screen.", { exact: true })).toBeVisible();
+  await expect(call.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+  await expect(call.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
+  await expect(call.getByText("Listening", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "call-approval-prompt");
 });
 
