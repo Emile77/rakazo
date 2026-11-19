@@ -86,7 +86,7 @@ describe("live conversation lifecycle", () => {
           { signal: expect.any(AbortSignal) },
         );
         expect(mocks.end.mock.invocationCallOrder[0]).toBeLessThan(
-          mocks.connect.mock.invocationCallOrder[1],
+          mocks.connect.mock.invocationCallOrder[1] ?? 0,
         );
         expect(mocks.input).not.toHaveBeenCalled();
       }
