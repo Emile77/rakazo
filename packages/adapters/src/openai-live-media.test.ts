@@ -63,8 +63,8 @@ describe("OpenAI GA live media", () => {
     socket.receive({ type: "session.created" });
     await Promise.resolve();
     expect(resolved).toBe(false);
-    expect(socket.sent[0].session.audio.input.format).toEqual({ type: "audio/pcm", rate: 24000 });
-    expect(socket.sent[0].session.tools[0].type).toBe("function");
+    expect(socket.sent[0]?.session.audio.input.format).toEqual({ type: "audio/pcm", rate: 24000 });
+    expect(socket.sent[0]?.session.tools[0].type).toBe("function");
     socket.receive({ type: "session.updated" });
     (await promise).close();
     expect(events).toEqual([{ type: "ready" }, { type: "closed", failed: false }]);
@@ -91,7 +91,7 @@ describe("OpenAI GA live media", () => {
     const { socket, session, events } = await ready();
     session.sendFrame("AAAA", "image/png");
     session.sendText("hello");
-    expect(socket.sent[1].item.content[0]).toEqual({
+    expect(socket.sent[1]?.item.content[0]).toEqual({
       type: "input_image",
       image_url: "data:image/png;base64,AAAA",
     });

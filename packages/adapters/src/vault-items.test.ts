@@ -1555,6 +1555,7 @@ describe("a login's authenticator code, wherever its password is refused", () =>
         replayEffectToolName: "browser_act",
         fleetSummary: undefined,
         heldForApproval: false,
+        personApproval: false,
         purchase: undefined,
         cardUse: undefined,
         loginUse: undefined,

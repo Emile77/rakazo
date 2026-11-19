@@ -59,8 +59,8 @@ describe("Xai GA live media", () => {
     socket.receive({ type: "session.created" });
     await Promise.resolve();
     expect(resolved).toBe(false);
-    expect(socket.sent[0].session.audio.input.format).toEqual({ type: "audio/pcm", rate: 16000 });
-    expect(socket.sent[0].session.tools[0].type).toBe("function");
+    expect(socket.sent[0]?.session.audio.input.format).toEqual({ type: "audio/pcm", rate: 16000 });
+    expect(socket.sent[0]?.session.tools[0].type).toBe("function");
     socket.receive({ type: "session.updated" });
     (await promise).close();
     expect(events).toEqual([{ type: "ready" }, { type: "closed", failed: false }]);
@@ -87,7 +87,7 @@ describe("Xai GA live media", () => {
     const { socket, session, events } = await ready();
     expect(() => session.sendFrame("AAAA", "image/png")).toThrow("does not support images");
     session.sendText("hello");
-    expect(socket.sent[1].item.content[0]).toEqual({ type: "input_text", text: "hello" });
+    expect(socket.sent[1]?.item.content[0]).toEqual({ type: "input_text", text: "hello" });
     expect(socket.sent[2]).toEqual({ type: "response.create" });
     socket.receive({ type: "response.output_audio.delta", delta: pcm([0]) });
     socket.receive({ type: "response.output_audio_transcript.delta", delta: "hi" });
@@ -230,7 +230,7 @@ describe("Xai GA live media", () => {
     vi.stubGlobal("fetch", fetcher);
     const models = await new XaiLiveMediaProvider().listModels("fake");
     expect(models.map((m) => m.id)).toEqual(["grok-voice-latest", "grok-voice-3.0"]);
-    expect(models[0].capabilities?.imageInput).toBe(false);
+    expect(models[0]?.capabilities?.imageInput).toBe(false);
     expect(fetcher.mock.calls).toHaveLength(1);
     await expect(
       openXaiLiveMedia("fake", { model: "unknown", instructions: "", onEvent() {} }),

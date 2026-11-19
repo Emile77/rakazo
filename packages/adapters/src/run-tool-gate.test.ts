@@ -59,6 +59,7 @@ function gate(options: {
     replayEffectToolName: "browser_act",
     fleetSummary: undefined,
     heldForApproval: false,
+    personApproval: false,
     purchase: undefined,
     cardUse: undefined,
     loginUse: options.asks === false ? undefined : loginUse,

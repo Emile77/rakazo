@@ -44,8 +44,8 @@ function fixture() {
 describe("live media transport", () => {
   it("waits for setup and sends audio, frames, text and correlated results", async () => {
     const { socket, promise } = fixture();
-    expect(socket.sent[0].setup.model).toBe("models/test-live");
-    expect(socket.sent[0].setup.outputAudioTranscription).toEqual({});
+    expect(socket.sent[0]?.setup.model).toBe("models/test-live");
+    expect(socket.sent[0]?.setup.outputAudioTranscription).toEqual({});
     socket.receive({ setupComplete: {} });
     const session = await promise;
     session.sendAudio("AAAA");
@@ -182,9 +182,9 @@ describe("live model discovery", () => {
         capabilities: { audioInput: true, audioOutput: true, imageInput: true, toolCalls: true },
       },
     ]);
-    expect(fetcher.mock.calls[1][0].searchParams.get("pageToken")).toBe("opaque page");
-    expect(String(fetcher.mock.calls[0][0])).not.toContain("fake-key");
-    expect(fetcher.mock.calls[0][1].headers).toEqual({ "x-goog-api-key": "fake-key" });
+    expect(fetcher.mock.calls[1]?.[0].searchParams.get("pageToken")).toBe("opaque page");
+    expect(String(fetcher.mock.calls[0]?.[0])).not.toContain("fake-key");
+    expect(fetcher.mock.calls[0]?.[1].headers).toEqual({ "x-goog-api-key": "fake-key" });
   });
   it("does not leak upstream error bodies", async () => {
     vi.stubGlobal(

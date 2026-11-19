@@ -114,6 +114,7 @@ describe.each(cases)(
       });
       const socket = sockets[0];
       expect(socket).toBeDefined();
+      if (!socket) throw new Error("Provider did not create a WebSocket");
       socket.emit("open");
       let settled = false;
       void opening.then(() => {
