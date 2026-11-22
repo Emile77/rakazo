@@ -555,6 +555,7 @@ services:
       RAKAZO_ADMIN_EMAILS:
       DEPLOYMENT_VOICE:
       VOICE_SUMMARY_MIN_CHARS:
+      VOICE_LIVE_CALLS:
     ports:
       - "127.0.0.1:${RAKAZO_API_PORT:-3100}:3100"
     volumes:

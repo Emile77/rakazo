@@ -18,6 +18,7 @@ import {
   toolRequiresExplicitApproval,
 } from "@rakazo/core";
 import { urlSite } from "@rakazo/core/egress";
+import { argumentGiven } from "../bots/update-bot-patch.js";
 import {
   USER_COMPUTER_SCREEN_TOOLS,
   userComputerAppName,
@@ -221,6 +222,29 @@ export function buildApprovalAskBlock(
       ],
     };
   }
+  const plain = plainApprovalTitle(toolName, args);
+  if (plain) {
+    const detail = formatApprovalDetail(toolName, args, options?.reviewReason, undefined, secrets);
+    return {
+      kind: "ask",
+      approvalEffectId: effectId,
+      text: truncate(redactSecrets(plain, secrets), MAX_APPROVAL_SUMMARY_LENGTH),
+      detail: detail
+        ? truncate(redactSecrets(detail, secrets), MAX_APPROVAL_DETAIL_LENGTH)
+        : undefined,
+      status: "pending",
+      actions: onceOnly
+        ? [
+            { id: "allow", label: "Allow once" },
+            { id: "deny", label: "Deny" },
+          ]
+        : [
+            { id: "allow", label: "Allow once" },
+            { id: "always", label: "Always allow this tool" },
+            { id: "deny", label: "Deny" },
+          ],
+    };
+  }
   const fetchSite = webFetchSite(toolName, args);
   const summary = describeApprovalAction(toolName, args, options?.batch, secrets);
   const detail = formatApprovalDetail(
@@ -261,6 +285,41 @@ export function buildApprovalAskBlock(
               { id: "deny", label: "Deny" },
             ],
   };
+}
+
+/** Settings the card names in plain words; the keys are update_bot's and update_preferences'. */
+const SETTING_LABELS: Record<string, string> = {
+  voice: "voice",
+  voiceId: "voice",
+  model: "model",
+  thinkingLevel: "thinking",
+  readAloud: "read aloud",
+  autoSpeak: "read aloud",
+  timezone: "time zone",
+  marketingEmails: "marketing emails",
+};
+
+/**
+ * A short sentence for the approvals a person reads on a call, where "Review before" and a tool
+ * name say nothing. Undefined keeps the generic card.
+ */
+export function plainApprovalTitle(
+  toolName: string,
+  args: Record<string, unknown>,
+): string | undefined {
+  if (toolName === "remember") return "Save this to memory?";
+  if (toolName === "claim_email_address") return "Claim this email address?";
+  if (
+    (toolName === "update_bot" && !argumentGiven(args.bot_id)) ||
+    toolName === "update_preferences"
+  ) {
+    const changes = Object.entries(args)
+      .filter(([key, value]) => key in SETTING_LABELS && argumentGiven(value))
+      .map(([key, value]) => `${SETTING_LABELS[key]} → ${String(value)}`);
+    // Name, description or instructions alone keep their own card.
+    return changes.length ? `Change ${changes.join(", ")}?` : undefined;
+  }
+  return undefined;
 }
 
 function webFetchSite(toolName: string, args: Record<string, unknown>): string | undefined {

@@ -218,6 +218,7 @@ export type ClientOperation =
   | "react.render"
   | "mobile.startup"
   | "voice.microphone"
+  | "voice.conversation"
   | "voice.turn"
   | "rpc.transport"
   | "desktop.startup"

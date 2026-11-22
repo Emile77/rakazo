@@ -16,6 +16,8 @@ export const VoiceCatalogEntrySchema = z.object({
   modelConnection: z.boolean().optional(),
   /** The provider can list its voices for one language, so the picker may offer a filter. */
   languages: z.boolean().optional(),
+  /** Calls can hold a live two-way conversation that hands work to the bot. */
+  conversation: z.boolean().optional(),
   /** The provider lists its speech models, so the model field can suggest them. */
   speechModels: z.boolean().optional(),
   /** A voice id can be typed, because a model's voices may be missing from its listing. */
@@ -46,6 +48,8 @@ export const VoiceCredentialSchema = z.object({
   /** Fish speech-model override. Empty uses the deployment default. */
   speechModel: z.string(),
   transcribe: z.boolean(),
+  /** The user turned on live calls for this connection. */
+  liveCalls: z.boolean().default(false),
   /** Self-hosted server base URL and model ids (never the key). Empty for hosted providers. */
   endpoint: z.string().default(""),
   /** A separate self-hosted transcription server; empty when `endpoint` transcribes. */
@@ -59,7 +63,29 @@ export const VoiceStatusSchema = z.object({
   configured: z.boolean(),
   ready: z.boolean(),
   transcribe: z.boolean(),
+  /** Calls talk live and hand work to the bot instead of taking turns. */
+  conversation: z.boolean().optional(),
   provider: z.string().nullable(),
   voiceId: z.string(),
 });
 export type VoiceStatus = z.infer<typeof VoiceStatusSchema>;
+
+/** What a conversation call's client hears from the API while the call runs. */
+export const ConversationCallEventSchema = z.discriminatedUnion("type", [
+  /** A fragment of what the caller or the voice said. */
+  z.object({
+    type: z.literal("caption"),
+    role: z.enum(["user", "bot"]),
+    text: z.string(),
+    /** The transcript line this fragment extends; overlapping speech can extend an earlier one. */
+    line: z.number().int().nonnegative().optional(),
+  }),
+  /** The voice handed the caller's request to the bot; `handoffId` ties the reply to it. */
+  z.object({
+    type: z.literal("handoff"),
+    handoffId: z.string().optional(),
+    text: z.string(),
+  }),
+  z.object({ type: z.literal("ended") }),
+]);
+export type ConversationCallEvent = z.infer<typeof ConversationCallEventSchema>;

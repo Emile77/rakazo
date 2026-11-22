@@ -565,6 +565,7 @@ services:
       RAKAZO_ADMIN_EMAILS:
       DEPLOYMENT_VOICE:
       VOICE_SUMMARY_MIN_CHARS:
+      VOICE_LIVE_CALLS:
     expose:
       - "3100"
     volumes:

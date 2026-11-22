@@ -68,10 +68,12 @@ import {
   prepareVoice,
   toVoiceCredential,
   toVoiceStatus,
+  updateVoiceLiveCalls,
   updateVoiceSpeechModel,
   voiceContext,
   voiceCredentialHasKey,
   voiceCredentialServer,
+  voiceLiveCallsEnabled,
   voiceProviderFor,
   withVoiceConnection,
 } from "../calls/voice.js";
@@ -638,6 +640,7 @@ export function accountRoutes(ctx: RouterContext) {
           sttApiKey: input.sttApiKey,
           ttsModel: input.ttsModel,
           sttModel: input.sttModel,
+          liveCalls: input.liveCalls,
           scope: input.scope,
           signal: context.signal,
         }),
@@ -667,8 +670,11 @@ export function accountRoutes(ctx: RouterContext) {
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
           ),
         );
-        return toVoiceStatus(cred);
+        return toVoiceStatus(cred, { liveCalls: voiceLiveCallsEnabled(deps) });
       }),
+      setLiveCalls: authed.voice.setLiveCalls.handler(async ({ context, input }) =>
+        updateVoiceLiveCalls(deps, context.actor, input),
+      ),
       setSpeechModel: authed.voice.setSpeechModel.handler(async ({ context, input }) =>
         updateVoiceSpeechModel(deps, context.actor, { ...input, signal: context.signal }),
       ),

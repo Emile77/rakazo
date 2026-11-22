@@ -7,6 +7,7 @@ import {
   TOOL_QUESTION_FIELDS_MAX,
   ToolQuestionValueSchema,
 } from "../integrations/tool-question.js";
+import { ConversationCallEventSchema } from "../models/voice.js";
 import {
   CalendarResponse,
   NativeCalendarDeviceKey,
@@ -138,6 +139,62 @@ export const threadsRpc = {
         }),
       )
       .output(z.object({ opening: z.string(), reason: z.string() })),
+    /**
+     * Starts a live conversation for a call whose voice supports it: the client sends its
+     * WebRTC offer and plays the answer's audio. Refused when the voice cannot converse, so
+     * the client takes turns instead.
+     */
+    connectCall: oc
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+          offerSdp: z.string().min(1).max(20_000),
+          /** The voice greets first; false when the call already has an opening to say. */
+          greet: z.boolean().optional(),
+        }),
+      )
+      .output(z.object({ answerSdp: z.string() })),
+    /** Follows a live conversation started with connectCall until it ends. */
+    callEvents: oc
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+        }),
+      )
+      .output(eventIterator(ConversationCallEventSchema)),
+    /** Gives the live conversation's voice something to say, or holds the caller's audio. */
+    updateCall: oc
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+          say: z
+            .object({
+              text: z.string().min(1).max(4_000),
+              handoffId: z.string().max(200).optional(),
+              /** An update while the bot keeps working, not its result. */
+              progress: z.boolean().optional(),
+            })
+            .optional(),
+          /** Quiet context for the voice: what happens in the chat during the call. */
+          note: z.string().min(1).max(4_000).optional(),
+          /** The newest handoff never became a chat turn: keep its words as small talk. */
+          keepHandoff: z.literal(true).optional(),
+          listening: z.boolean().optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
     /** The user turned the bot's call down, asked for it later, or it rang out. */
     declineCall: oc
       .input(

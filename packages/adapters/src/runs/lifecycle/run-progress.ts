@@ -34,6 +34,7 @@ import {
   clampUserProgressMessage,
   extractNarrationText,
   isUserProgressClientNonce,
+  MID_TURN_PROGRESS_MIN_TURN_AGE_MS,
   midTurnProgressBudgetAllows,
   narrationStatusLine,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
@@ -131,7 +132,25 @@ export function canPostLongTaskHeadsUp(ctx: RunContext) {
   );
 }
 
-function progressSinceBudgetStart(reply: ReplyState) {
+/** The message that starts a person's task: the run's first interim message, posted at once. */
+export function canPostStartMessage(ctx: RunContext) {
+  return (
+    ctx.state.reply.midTurnProgressCount === 0 &&
+    isConversationalRun(ctx.run.trigger) &&
+    !runAllowsSilentEmpty(ctx.run.trigger)
+  );
+}
+
+/**
+ * A progress update the bot chose to send (message_user) on a long turn. Unlike narration that
+ * gets promoted to a message, these have no count cap: a long task keeps the person posted for
+ * as long as it runs, and the prompt keeps them spaced and high-signal.
+ */
+export function canPostLongTurnUpdate(reply: ReplyState) {
+  return Date.now() - reply.turnStartedAtMs >= MID_TURN_PROGRESS_MIN_TURN_AGE_MS;
+}
+
+export function progressSinceBudgetStart(reply: ReplyState) {
   return reply.midTurnProgressCount - reply.progressBudgetStart;
 }
 

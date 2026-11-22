@@ -81,12 +81,27 @@ describe("call turn", () => {
     });
   });
 
-  it("sends approvals and codes to the screen instead of answering them by voice", () => {
-    expect(callTurn(waiting([approval]), "yes")).toEqual({
-      kind: "approve_on_screen",
+  it("answers an approval by a clear spoken yes or no, and keeps codes on screen", () => {
+    expect(callTurn(waiting([approval]), "Yes, approve it")).toEqual({
+      kind: "answer",
       messageId: "ask",
       runId: "run-1",
+      answer: "allow",
     });
+    expect(callTurn(waiting([approval]), "No, deny it.")).toEqual({
+      kind: "answer",
+      messageId: "ask",
+      runId: "run-1",
+      answer: "deny",
+    });
+    // A question or a long sentence is no decision: the card keeps waiting.
+    for (const text of ["What does it change?", "yes but first tell me what it saves exactly ok"]) {
+      expect(callTurn(waiting([approval]), text)).toEqual({
+        kind: "approval_unclear",
+        messageId: "ask",
+        runId: "run-1",
+      });
+    }
     expect(callTurn(waiting([secret]), "one two three")).toEqual({ kind: "enter_code" });
     expect(pendingCallSecretAsk(waiting([secret]))).toBe(true);
     expect(pendingCallSecretAsk(waiting([question]))).toBe(false);

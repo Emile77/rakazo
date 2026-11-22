@@ -4,6 +4,7 @@ import {
   groupVoiceChats,
   latestSpokenCallReply,
   voiceChatDuration,
+  voiceChatSpeaker,
   voiceChatSummary,
 } from "./voice-chat-groups.js";
 
@@ -117,6 +118,50 @@ describe("groupVoiceChats", () => {
       ).toEqual(["voiceChat", "message", "voiceChat"]);
     },
   );
+
+  it("keeps a reply that lands after the caller hung up inside the call's card", () => {
+    const spoken = message({ role: "user", callId: "call-1", runId: "voice-run" });
+    const marker = message({
+      role: "bot",
+      callId: "call-1",
+      blocks: [{ kind: "voice_call", callId: "call-1", title: "", farewell: "" }],
+    });
+    const lateReply = message({ role: "bot", runId: "voice-run" });
+    const wrapUp = message({ role: "bot", runId: "hang-up-run" });
+    const items = groupVoiceChats([spoken, marker, lateReply, wrapUp]);
+
+    expect(items.map((item) => item.kind)).toEqual(["voiceChat", "message"]);
+    const [group] = items;
+    expect(group?.kind === "voiceChat" && group.messages).toEqual([spoken, lateReply, marker]);
+    expect(group?.kind === "voiceChat" && group.marker).toBe(marker);
+    expect(items.at(-1)).toEqual({ kind: "message", message: wrapUp });
+    expect(latestSpokenCallReply([spoken, marker, lateReply], "call-1")).toBeUndefined();
+  });
+
+  it("leaves a late reply in chat once a typed message reused its run", () => {
+    const spoken = message({ role: "user", callId: "call-1", runId: "voice-run" });
+    const marker = message({
+      role: "bot",
+      callId: "call-1",
+      blocks: [{ kind: "voice_call", callId: "call-1", title: "", farewell: "" }],
+    });
+    const typed = message({ role: "user", runId: "voice-run" });
+    const reply = message({ role: "bot", runId: "voice-run" });
+
+    expect(groupVoiceChats([spoken, marker, typed, reply]).map((item) => item.kind)).toEqual([
+      "voiceChat",
+      "message",
+      "message",
+    ]);
+  });
+
+  it("tells the caller, the live voice and the bot apart", () => {
+    expect(voiceChatSpeaker(message({ role: "user", callId: "call-1", runId: "run-1" }))).toBe(
+      "user",
+    );
+    expect(voiceChatSpeaker(message({ role: "bot", callId: "call-1" }))).toBe("voice");
+    expect(voiceChatSpeaker(message({ role: "bot", runId: "run-1" }))).toBe("bot");
+  });
 
   it("keeps two calls in separate groups", () => {
     const items = groupVoiceChats([

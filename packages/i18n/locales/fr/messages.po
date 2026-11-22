@@ -13078,3 +13078,15 @@ msgstr "Aucune conservation des données"
 #: apps/web/src/components/vault/VaultItemEditor.tsx
 msgid "ZIP or postal code"
 msgstr "Code postal"
+
+#: apps/web/src/pages/VoiceSettingsOverlay.tsx
+msgid "Live calls"
+msgstr "Appels en direct"
+
+#: apps/web/src/pages/VoiceSettingsOverlay.tsx
+msgid "Talk naturally and interrupt anytime; the bot still does the real work. Billed by the minute by the provider."
+msgstr "Parlez naturellement et coupez la parole quand vous voulez ; le bot fait toujours le vrai travail. Facturé à la minute par le fournisseur."
+
+#: apps/web/src/pages/VoiceSettingsOverlay.tsx
+msgid "Could not save live calls"
+msgstr "Impossible d'enregistrer les appels en direct"

@@ -369,3 +369,7 @@ calls to the same person, and `PHONE_CALL_RING_SECONDS` (default `45`) how long 
 rings.
 
 For native mobile ringing and optional APNs VoIP configuration, see [Mobile incoming calls](./self-host-clients.md#mobile-incoming-calls).
+
+#### Live calls
+
+Off by default. Set `VOICE_LIVE_CALLS=true` on the API to let calls whose voice can hold a live conversation (OpenAI) talk in real time instead of taking turns. A fast voice model talks with the caller and hands real work to the bot, which answers with its usual tools and memory; the voice then says the result. The provider bills the conversation by the minute, on top of the bot's own model use. Small talk is kept in the call's card in the chat, so the bot remembers it. If the live conversation cannot start, the call takes turns as before.

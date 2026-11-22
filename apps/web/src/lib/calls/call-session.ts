@@ -1,11 +1,18 @@
 import { t } from "@lingui/core/macro";
-import type { BotAvatarSet, ProductEvent, ThreadMessage, ThreadSnapshot } from "@rakazo/contracts";
+import type {
+  BotAvatarSet,
+  ConversationCallEvent,
+  ProductEvent,
+  ThreadMessage,
+  ThreadSnapshot,
+} from "@rakazo/contracts";
 import type { CallExchange } from "@rakazo/core";
 import {
   CALL_FAREWELL_TIMEOUT_MS,
   callClientNonce,
   callRunStatus,
   callTurn,
+  createCallActivity,
   createCallReplySpeech,
   createCallSendTracker,
   createInterimBargeIn,
@@ -38,6 +45,8 @@ import { reportClientError } from "../platform/monitoring";
 import { recheckSessionOnUnauthorized, rpc } from "../query/rpc.js";
 import { errorText } from "../query/user-error";
 import { pickUp } from "./call-pickup.js";
+import type { ConversationAudio } from "./conversation-call.js";
+import { startConversation } from "./conversation-call.js";
 import { dictation, usesServerDictation } from "./dictation.js";
 import { speaker } from "./tts.js";
 
@@ -59,6 +68,16 @@ export interface CallState {
   caption: string;
   heard: string;
   exchanges: CallExchange[];
+  /** An approval the called bot waits on, answered from the call itself. */
+  approval: CallApproval | null;
+}
+
+/** What a protection asks the caller to approve, shown with Approve and Deny in the call. */
+export interface CallApproval {
+  runId: string;
+  messageId: string;
+  title: string;
+  detail?: string;
 }
 
 /**
@@ -105,6 +124,8 @@ const spokenMessageIds = new Set<string>();
 const replySpeech = createCallReplySpeech();
 /** The run whose reply is being said as it is written; null once that reply is whole. */
 let streamRunId: string | null = null;
+/** Bot messages waiting to tell an update from a reply landing as its run ends. */
+const pendingUpdateIds = new Set<string>();
 let unsubSpeech: (() => void) | null = null;
 let unsubDictation: (() => void) | null = null;
 let hangUpAfterReply = false;
@@ -119,10 +140,31 @@ let micOpen = false;
 let bargedIn = false;
 /** A turn is in flight: its reply must be spoken even if the mic reopened meanwhile. */
 let awaitingReply = false;
-/** The run whose approval card the caller was sent to answer on screen. */
+/** The run whose approval card the caller was asked about; its next reply answers the call. */
 let approvalRunId: string | null = null;
+/** What the live voice was already told about the chat during this call. */
+let activity = createCallActivity();
 let awaitedRunId: string | null = null;
 const finishedRunIds = new Set<string>();
+/** The caller's voice may hold a live conversation instead of taking turns. */
+let conversable = false;
+/**
+ * Set while the call talks live: the voice converses on its own and hands requests here as
+ * turns, and replies go back to it to say instead of to the speaker.
+ */
+let conversation: {
+  controller: AbortController;
+  audio: ConversationAudio | null;
+  /** The handoff the turn in flight answers, so the voice ties the reply to it. */
+  handoffId?: string;
+  speaking: boolean;
+  /** Hang up once the voice has finished saying the last reply or goodbye. */
+  hangUpAfterSpeech: boolean;
+  /** The voice was holding the caller's audio for a code typed on screen. */
+  holdingAudio: boolean;
+  /** The API's transcript line numbers, mapped to their place in the call's exchanges. */
+  lines: Map<number, number>;
+} | null = null;
 /** Counting down an interim phrase heard over the reply, before it counts as cutting in. */
 const interim = createInterimBargeIn(() => {
   if (state?.phase !== "speaking") return;
@@ -165,6 +207,8 @@ export function startCall(call: {
   botColor?: string;
   botAvatarSet?: BotAvatarSet;
   transcribe?: boolean;
+  /** The voice can hold a live conversation; the call falls back to turns if it cannot connect. */
+  conversation?: boolean;
   /** The bot called and the user picked up: no ringing, and the bot speaks first. */
   answered?: { callId: string; opening: string };
 }): void {
@@ -173,6 +217,7 @@ export function startCall(call: {
   prepareCallAudio();
   callId = call.answered?.callId ?? newClientId();
   transcribe = call.transcribe;
+  conversable = Boolean(call.conversation);
   spokenMemory.clear();
   replySpeech.clear();
   streamRunId = null;
@@ -183,6 +228,7 @@ export function startCall(call: {
   approvalRunId = null;
   awaitedRunId = null;
   finishedRunIds.clear();
+  activity = createCallActivity();
   state = {
     botId: call.botId,
     botName: call.botName,
@@ -196,6 +242,7 @@ export function startCall(call: {
     caption: "",
     heard: "",
     exchanges: [],
+    approval: null,
   };
   unsubSpeech = speaker.subscribe((speech) => {
     if (!state || state.phase === "ringing") return;
@@ -243,6 +290,10 @@ export function startCall(call: {
   void pickUp(ringing.signal, { ring: !call.answered }).then(() => {
     if (ringing.signal.aborted || !state || callId !== ringingCallId) return;
     pickup = null;
+    if (conversable) {
+      void converse(call.botId, opening);
+      return;
+    }
     if (!opening) {
       set({ phase: "listening", connectedAt: Date.now() });
       void listen();
@@ -262,6 +313,164 @@ export function startCall(call: {
       void listen();
     });
   });
+}
+
+/** Talks live when the voice can; any failure to connect falls back to taking turns. */
+async function converse(botId: string, opening: string) {
+  if (!state) return;
+  const controller = new AbortController();
+  const live: NonNullable<typeof conversation> = {
+    controller,
+    audio: null,
+    speaking: false,
+    hangUpAfterSpeech: false,
+    lines: new Map(),
+    holdingAudio: false,
+  };
+  conversation = live;
+  const connectingCallId = callId;
+  set({
+    phase: "listening",
+    connectedAt: Date.now(),
+    ...(opening ? { exchanges: [{ role: "bot" as const, text: opening }] } : {}),
+  });
+  try {
+    const audio = await startConversation({
+      botId,
+      callId,
+      greet: !opening,
+      signal: controller.signal,
+      onEvent: (event) => {
+        if (conversation === live) hearConversation(event);
+      },
+      onSpeaking: (speaking) => {
+        if (conversation === live) conversationSpeaking(speaking);
+      },
+      onLost: (error) => {
+        if (conversation !== live || !state) return;
+        reportClientError(error, "voice.conversation");
+        set({ caption: errorText(error, t`The call dropped`) });
+        endCall();
+      },
+    });
+    if (conversation !== live || callId !== connectingCallId || !state) {
+      audio.close();
+      return;
+    }
+    live.audio = audio;
+    audio.setMuted(state.muted);
+    if (opening) sayInCall(opening);
+    // From here the voice hears about everything the chat shows, starting with a card that was
+    // already waiting when the call connected.
+    activity.start(thread);
+    reactToThread();
+  } catch (error) {
+    if (conversation !== live || callId !== connectingCallId || !state) return;
+    conversation = null;
+    controller.abort();
+    // The voice cannot talk live right now; this call takes turns instead.
+    if (errorStatus(error) !== 412) reportClientError(error, "voice.conversation");
+    if (!opening) {
+      void listen();
+      return;
+    }
+    set({ phase: "thinking" });
+    spokenMemory.remember(opening);
+    openingPending = true;
+    void speaker.speak(opening, { botId }).catch(() => {
+      if (callId !== connectingCallId) return;
+      openingPending = false;
+      void listen();
+    });
+  }
+}
+
+/** Captions extend the transcript line by line; a handoff is the caller's turn. */
+function hearConversation(event: ConversationCallEvent) {
+  if (!state) return;
+  if (event.type === "ended") {
+    endCall();
+    return;
+  }
+  if (event.type === "handoff") {
+    if (conversation) conversation.handoffId = event.handoffId;
+    void handleTranscript(event.text);
+    return;
+  }
+  const exchanges = [...state.exchanges];
+  // The API numbers the call's lines; overlapping speech can extend an earlier one.
+  const known =
+    event.line === undefined || !conversation ? undefined : conversation.lines.get(event.line);
+  const at =
+    known !== undefined && exchanges[known]?.role === event.role
+      ? known
+      : event.line === undefined && exchanges.at(-1)?.role === event.role
+        ? exchanges.length - 1
+        : -1;
+  if (at >= 0) {
+    const current = exchanges[at]!;
+    exchanges[at] = { ...current, text: current.text + event.text };
+  } else {
+    exchanges.push({ role: event.role, text: event.text.trimStart() });
+    if (event.line !== undefined) conversation?.lines.set(event.line, exchanges.length - 1);
+  }
+  const line = exchanges[at >= 0 ? at : exchanges.length - 1]?.text ?? "";
+  set(event.role === "user" ? { exchanges, heard: line } : { exchanges, caption: line });
+}
+
+function conversationSpeaking(speaking: boolean) {
+  if (!state || !conversation) return;
+  conversation.speaking = speaking;
+  if (!speaking && conversation.hangUpAfterSpeech) {
+    endCall();
+    return;
+  }
+  set({ phase: speaking ? "speaking" : awaitingReply ? "thinking" : "listening" });
+}
+
+/** Gives the live voice something to say; it words it itself, in the caller's language. */
+function sayInCall(text: string, handoffId?: string, progress?: boolean) {
+  if (!state) return;
+  void rpc.threads
+    .updateCall({
+      botId: state.botId,
+      callId,
+      say: { text, ...(handoffId ? { handoffId } : {}), ...(progress ? { progress } : {}) },
+    })
+    .catch((error) => reportClientError(error, "voice.conversation"));
+}
+
+/** The newest handoff never became a chat turn: the chat keeps its words as small talk. */
+function keepHandoff() {
+  if (!state) return;
+  void rpc.threads
+    .updateCall({ botId: state.botId, callId, keepHandoff: true })
+    .catch((error) => reportClientError(error, "voice.conversation"));
+}
+
+/**
+ * Tells the live voice, quietly, what changed in the chat: the bot's messages and steps, the
+ * cards it waits on (an approval in full), what the user typed, and errors. Replies the voice
+ * is already saying are left out.
+ */
+function noteActivity() {
+  if (!state || !conversation?.audio || !activity.started) return;
+  const { botId } = state;
+  for (const note of activity.notes(thread, { callId, skip: spokenMessageIds })) {
+    void rpc.threads
+      .updateCall({ botId, callId, note })
+      .catch((error) => reportClientError(error, "voice.conversation"));
+  }
+}
+
+/** Holds the caller's audio while the bot waits on a code typed on screen. */
+function holdConversationAudio(hold: boolean) {
+  if (!state || !conversation || conversation.holdingAudio === hold) return;
+  conversation.holdingAudio = hold;
+  conversation.audio?.setMuted(hold || state.muted);
+  void rpc.threads
+    .updateCall({ botId: state.botId, callId, listening: !hold })
+    .catch((error) => reportClientError(error, "voice.conversation"));
 }
 
 export function prepareCallAudio(): void {
@@ -297,6 +506,8 @@ function dropCall(): void {
   pickup?.abort();
   pickup = null;
   openingPending = false;
+  conversation?.controller.abort();
+  conversation = null;
   feed?.controller.abort();
   feed = null;
   hangUpAfterReply = false;
@@ -424,6 +635,10 @@ export function toggleMute(): void {
   if (!state) return;
   const muted = !state.muted;
   set({ muted });
+  if (conversation) {
+    conversation.audio?.setMuted(muted || conversation.holdingAudio);
+    return;
+  }
   if (muted) {
     dictation.stop("cancel");
     micOpen = false;
@@ -533,6 +748,11 @@ function speakFarewell(payload: Record<string, unknown>) {
     return;
   }
   awaitingReply = false;
+  if (conversation) {
+    conversation.hangUpAfterSpeech = true;
+    sayInCall(farewell);
+    return;
+  }
   set({ exchanges: [...state.exchanges, { role: "bot", text: farewell }], heard: "" });
   spokenMemory.remember(farewell);
   const options = { botId: state.botId, messageId, callId };
@@ -555,8 +775,58 @@ function commit(next: ThreadSnapshot | null) {
     else finishedRunIds.add(run.id);
   }
   thread = next;
+  syncCallApproval();
   reactToThread();
   return next;
+}
+
+/** The called bot's latest unanswered approval, if its run still waits on it. */
+function pendingApproval(): CallApproval | null {
+  for (const message of [...(thread?.messages ?? [])].reverse()) {
+    if (message.role !== "bot" || !message.runId) continue;
+    const block = message.blocks.find(
+      (candidate) =>
+        candidate.kind === "ask" &&
+        candidate.status !== "answered" &&
+        isApprovalAskBlock(candidate),
+    );
+    if (block?.kind !== "ask") continue;
+    if (finishedRunIds.has(message.runId)) return null;
+    return {
+      runId: message.runId,
+      messageId: message.id,
+      title: block.text,
+      ...(block.detail ? { detail: block.detail } : {}),
+    };
+  }
+  return null;
+}
+
+function syncCallApproval() {
+  if (!state) return;
+  const next = pendingApproval();
+  if (next?.messageId === state.approval?.messageId) return;
+  // A card the caller cannot see is no approval: bring the call back into view.
+  set(next ? { approval: next, minimized: false } : { approval: null });
+}
+
+/** Approve or deny, from the call, what the bot is waiting on. */
+export async function answerCallApproval(decision: "allow" | "deny"): Promise<void> {
+  const approval = state?.approval;
+  if (!state || !approval) return;
+  const { botId } = state;
+  set({ approval: null });
+  try {
+    await rpc.threads.answer({
+      botId,
+      runId: approval.runId,
+      messageId: approval.messageId,
+      answer: decision,
+    });
+  } catch (error) {
+    if (state?.botId !== botId) return;
+    set({ approval, caption: errorText(error, t`Could not send that`) });
+  }
 }
 
 /** The tail of playback reaches the microphone after the audio element ends. */
@@ -577,7 +847,16 @@ async function listen() {
   if (!state) return;
   // The caller said goodbye: every path back to listening hangs up instead.
   if (hangUpAfterReply) {
+    if (conversation) {
+      conversation.hangUpAfterSpeech = true;
+      return;
+    }
     endCall();
+    return;
+  }
+  // The live voice listens on its own; only the phase follows the turn.
+  if (conversation) {
+    set({ phase: conversation.speaking ? "speaking" : "listening" });
     return;
   }
   // A reply still playing owns the audio session; its idle event calls back here.
@@ -625,7 +904,7 @@ async function handleTranscript(text: string) {
   }
   // Between sentences of a reply still being written counts as over it: a backchannel or the
   // reply's echo must not become a turn.
-  if (state.phase === "speaking" || replyStillWritten()) {
+  if (!conversation && (state.phase === "speaking" || replyStillWritten())) {
     if (!isCallBargeIn(text)) {
       set({ heard: "" });
       void openMic();
@@ -639,7 +918,7 @@ async function handleTranscript(text: string) {
   }
   dictation.stop("submit");
   // The microphone caught the reply, not the caller: drop it and keep listening.
-  if (spokenMemory.isEcho(text)) {
+  if (!conversation && spokenMemory.isEcho(text)) {
     set({ heard: "" });
     void listen();
     return;
@@ -647,8 +926,11 @@ async function handleTranscript(text: string) {
   // The caller's turn: a reply said as it was written ended with it.
   streamRunId = null;
   const turn = callTurn(thread, text);
+  // Captured now: the reply to this turn is said against the handoff that asked for it.
+  const handoffId = conversation?.handoffId;
   if (turn.kind === "enter_code") {
-    set({ heard: "", caption: t`Hang up, then enter the code on screen.` });
+    if (conversation) sayInCall(t`The code is entered on screen, never said aloud.`, handoffId);
+    else set({ heard: "", caption: t`Hang up, then enter the code on screen.` });
     return;
   }
   const { botId, exchanges } = state;
@@ -657,21 +939,30 @@ async function handleTranscript(text: string) {
   const callFeed = feed;
   const turnCallId = callId;
   const closing = isFarewell(text);
-  // An approval is only answered on screen, next to its details; a spoken reply would be refused.
-  if (turn.kind === "approve_on_screen") {
-    // The caption covers a card the call never read; once tapped, it must not pass for the reply.
+  // A clear spoken yes or no answers an approval (callTurn); anything else leaves the card
+  // waiting, the caller is asked again, and the chat still keeps what they said.
+  if (turn.kind === "approval_unclear") {
+    // The caption covers a card the call already told; once answered, it must not pass for the reply.
     spokenMessageIds.add(turn.messageId);
     approvalRunId = turn.runId;
     awaitingReply = true;
     if (closing) hangUpAfterReply = true;
-    set({ heard: "", caption: t`Approve or deny it on screen.` });
+    const again = t`The card is still waiting. Say approve or deny, or use the card on screen.`;
+    if (conversation) {
+      keepHandoff();
+      sayInCall(again, handoffId);
+    } else set({ heard: "", caption: again });
     void listen();
     return;
   }
   approvalRunId = null;
   awaitedRunId = turn.kind === "answer" ? turn.runId : null;
   awaitingReply = true;
-  set({ heard: text, phase: "thinking", exchanges: [...exchanges, { role: "user", text }] });
+  set(
+    conversation
+      ? { phase: conversation.speaking ? "speaking" : "thinking" }
+      : { heard: text, phase: "thinking", exchanges: [...exchanges, { role: "user", text }] },
+  );
   if (closing) {
     hangUpAfterReply = true;
     // A second goodbye replaces this timer. Clear the previous one or it can
@@ -702,6 +993,10 @@ async function handleTranscript(text: string) {
     if (!state || state.botId !== botId || callId !== turnCallId) return;
     awaitingReply = false;
     set({ caption: errorText(error, t`Could not send that`) });
+    if (conversation) {
+      keepHandoff();
+      sayInCall(errorText(error, t`Could not send that`), handoffId);
+    }
     void listen();
     return;
   } finally {
@@ -738,7 +1033,10 @@ function reactToThread() {
   if (!state || state.phase === "ringing" || openingPending) return;
   // The bot already said goodbye: neither its marker nor the work it files after it is spoken.
   if (botEndedCall) return;
-  if (pendingCallSecretAsk(thread)) {
+  // After this pass decides what is said as a reply, so a reply is not also a note.
+  queueMicrotask(noteActivity);
+  if (conversation) holdConversationAudio(pendingCallSecretAsk(thread));
+  else if (pendingCallSecretAsk(thread)) {
     dictation.stop("cancel");
     micOpen = false;
     set({ heard: "" });
@@ -751,7 +1049,9 @@ function reactToThread() {
   // card keeps its live progress message after the card; that is not a reply.
   const turnIndex = messages.findLastIndex((message) => message.role === "user");
   const replyRunId = approvalRunId ?? awaitedRunId;
-  speakAsWritten(replyRunId, messages);
+  if (conversation) {
+    if (replyRunId) speakUpdates(messages.slice(turnIndex + 1), replyRunId);
+  } else speakAsWritten(replyRunId, messages);
   const lastBot = messages
     .slice(turnIndex + 1)
     .findLast(
@@ -768,10 +1068,26 @@ function reactToThread() {
     if (text) {
       // Never spoken again, interrupted or not.
       spokenMessageIds.add(lastBot.id);
-      // An approval is answered on screen, which sends no turn: keep waiting for the reply
-      // its run writes next.
+      // An approval answered on screen sends no turn: keep waiting for the reply its run
+      // writes next, whichever way it is answered.
       approvalRunId = approvalAsk ? (lastBot.runId ?? null) : null;
       awaitingReply = approvalRunId !== null;
+      if (conversation) {
+        // A live call keeps going while the code is typed; the voice says it, never the speaker.
+        const codeHint = t`The code is entered on screen, never said aloud.`;
+        const spoken = secretAsk
+          ? `${text}. ${codeHint}`
+          : approvalAsk
+            ? `${text}. ${t`Say approve or deny, or use the card on screen.`}`
+            : ask
+              ? `${text}. ${t`Say yes or no, or answer in a sentence.`}`
+              : text;
+        sayInCall(spoken, conversation.handoffId);
+        conversation.handoffId = undefined;
+        if (hangUpAfterReply) conversation.hangUpAfterSpeech = true;
+        set({ phase: conversation.speaking ? "speaking" : "listening" });
+        return;
+      }
       // What was already said while the run wrote it is not said again.
       const streamed = Boolean(lastBot.runId && lastBot.runId === streamRunId);
       if (streamed) streamRunId = null;
@@ -786,7 +1102,7 @@ function reactToThread() {
       const instruction = secretAsk
         ? t`Hang up first, then enter the code on screen.`
         : approvalAsk
-          ? t`Approve or deny it on screen.`
+          ? t`Say approve or deny, or use the card on screen.`
           : ask
             ? t`Say yes or no, or answer in a sentence.`
             : "";
@@ -812,6 +1128,44 @@ function reactToThread() {
     awaitedRunId = null;
     set({ caption: errorText(thread?.run?.id === replyRunId ? thread.run.error : undefined) });
     void listen();
+  }
+}
+
+/** How long a message must stay before its still-running run counts it as an update. */
+const UPDATE_SETTLE_MS = 1_500;
+
+/**
+ * The bot's messages while its run keeps working (its start message and updates) are
+ * spoken as they come. One still unfinished after a short wait is an update, not the reply
+ * landing just before its run ends.
+ */
+function speakUpdates(messages: readonly ThreadMessage[], runId: string) {
+  for (const message of messages) {
+    if (
+      message.role !== "bot" ||
+      message.runId !== runId ||
+      message.id.startsWith("progress:") ||
+      spokenMessageIds.has(message.id) ||
+      pendingUpdateIds.has(message.id) ||
+      replyFinished(message)
+    )
+      continue;
+    pendingUpdateIds.add(message.id);
+    const epoch = sessionEpoch;
+    setTimeout(() => {
+      pendingUpdateIds.delete(message.id);
+      if (epoch !== sessionEpoch || !conversation || botEndedCall) return;
+      if (spokenMessageIds.has(message.id)) return;
+      const current = thread?.messages.find((candidate) => candidate.id === message.id);
+      if (!current || replyFinished(current)) {
+        reactToThread();
+        return;
+      }
+      const text = speechFromBlocks(current.blocks);
+      if (!text) return;
+      spokenMessageIds.add(current.id);
+      sayInCall(text, undefined, true);
+    }, UPDATE_SETTLE_MS);
   }
 }
 

@@ -544,7 +544,7 @@ describe("mobile call session", () => {
       );
     });
 
-    it("sends an approval to the screen and keeps listening", async () => {
+    it("answers an approval by a clear spoken yes, and asks again otherwise", async () => {
       const fake = fakes();
       startCall({ botId: "bot-1", botName: "Ada" }, fake.deps);
       await flush();
@@ -562,15 +562,22 @@ describe("mobile call session", () => {
           },
         ]),
       );
-      fake.say("yes");
+      fake.say("who would it go to?");
       await flush();
       expect(fake.send).not.toHaveBeenCalled();
       expect(fake.answer).not.toHaveBeenCalled();
       expect(getSnapshot()).toMatchObject({
         phase: "listening",
-        caption: "Approve or deny it on screen.",
+        caption: "Say approve or deny, or use the card on screen.",
       });
       expect(fake.recordings).toHaveLength(2);
+      fake.say("yes, send it");
+      await flush();
+      expect(fake.answer).toHaveBeenCalledWith(
+        "bot-1",
+        expect.objectContaining({ answer: "allow" }),
+        expect.stringMatching(/^call:/),
+      );
     });
 
     it("ignores a snapshot from an ended call's watcher", async () => {

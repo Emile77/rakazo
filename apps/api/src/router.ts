@@ -172,6 +172,8 @@ export interface RouterDeps {
     gitSha?: string;
     integrationsCatalogUrl?: string;
     mcpAllowPrivateEndpoint?: boolean;
+    /** Calls may talk live with a voice that can converse; off unless `VOICE_LIVE_CALLS=true`. */
+    voiceLiveCalls?: boolean;
     desktopHostChoiceEnabled?: boolean;
     computerSettingsEnabled?: boolean;
     mcpStdioEnabled?: boolean;
@@ -239,6 +241,7 @@ export function routerEnv(env: AppEnv): RouterDeps["env"] {
     gitSha: env.gitSha,
     integrationsCatalogUrl: env.integrationsCatalogUrl,
     mcpAllowPrivateEndpoint: env.mcpAllowPrivateEndpoint,
+    voiceLiveCalls: env.voiceLiveCalls,
     desktopHostChoiceEnabled: Boolean(env.desktopStackToken),
     computerSettingsEnabled: env.computerSettingsEnabled,
     mcpStdioEnabled: env.mcpStdioEnabled,

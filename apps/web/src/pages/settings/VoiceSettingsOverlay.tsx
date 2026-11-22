@@ -16,6 +16,7 @@ import {
 import { fetchFresh } from "@rakazo/core/query";
 import {
   Button,
+  Checkbox,
   Dialog,
   DialogClose,
   DialogContent,
@@ -110,6 +111,8 @@ export function VoiceSettingsOverlay({
   const [sttModel, setSttModel] = useState(cached?.credential?.sttModel ?? "");
   const [sttBaseUrl, setSttBaseUrl] = useState(cached?.credential?.sttEndpoint ?? "");
   const [sttApiKey, setSttApiKey] = useState("");
+  const [liveCalls, setLiveCalls] = useState(cached?.credential?.liveCalls ?? false);
+  const liveCallsId = useId();
   // The connection fields as last rendered, read when a connect finishes.
   const connection = useRef({
     speechModel,
@@ -173,6 +176,7 @@ export function VoiceSettingsOverlay({
     if (!keep("ttsModel")) setTtsModel(cred?.ttsModel ?? "");
     if (!keep("sttModel")) setSttModel(cred?.sttModel ?? "");
     if (!keep("sttBaseUrl")) setSttBaseUrl(cred?.sttEndpoint ?? "");
+    if (!keepForm) setLiveCalls(cred?.liveCalls ?? false);
     if (!cred) return Promise.resolve();
     return queryClient
       .fetchQuery(
@@ -313,6 +317,7 @@ export function VoiceSettingsOverlay({
           // The server drops this voice when the address or speech model really changed.
           voiceId: voiceId || undefined,
           ...(selected.speechModel ? { speechModel: speechModel.trim() } : {}),
+          ...(selected.conversation ? { liveCalls } : {}),
           ...(selfHosted
             ? {
                 baseUrl: baseUrl.trim(),
@@ -428,6 +433,33 @@ export function VoiceSettingsOverlay({
       if (request === voicesRequest.current) {
         setError(errorText(err, t`Could not load voice settings`));
       }
+    }
+  }
+
+  async function saveLiveCalls(next: boolean) {
+    setLiveCalls(next);
+    // Before a key is connected, the box is sent with the connect.
+    if (!credential || credential.provider !== selected?.id) return;
+    setError(null);
+    markPending("voice");
+    try {
+      const saved = await rpc.voice.setLiveCalls({ provider: selected.id, liveCalls: next });
+      setLiveCalls(saved.liveCalls);
+      const update = (current: VoiceCredential[]) =>
+        current.map((entry) =>
+          entry.id === saved.id ? { ...entry, liveCalls: saved.liveCalls } : entry,
+        );
+      setCredentials(update);
+      queryClient.setQueryData(queries.voice.credentials.queryKey(scoped), (current) =>
+        current ? update(current) : current,
+      );
+      // Calls read live support from the voice status.
+      await queryClient.invalidateQueries({ queryKey: queries.voice.status.queryKey(scoped) });
+    } catch (err) {
+      setLiveCalls(!next);
+      setError(errorText(err, t`Could not save live calls`));
+    } finally {
+      markPending(null);
     }
   }
 
@@ -581,6 +613,28 @@ export function VoiceSettingsOverlay({
                   />
                 </Field>
               )}
+              {selected.conversation ? (
+                <div className="mt-5 flex items-start gap-3">
+                  <Checkbox
+                    id={liveCallsId}
+                    className="mt-0.5"
+                    checked={liveCalls}
+                    disabled={busy}
+                    onCheckedChange={(checked) => void saveLiveCalls(checked === true)}
+                  />
+                  <label htmlFor={liveCallsId} className="min-w-0 flex-1 text-body">
+                    <span className="font-medium text-foreground">
+                      <Trans>Live calls</Trans>
+                    </span>
+                    <span className="mt-0.5 block text-muted-foreground">
+                      <Trans>
+                        Talk naturally and interrupt anytime; the bot still does the real work.
+                        Billed by the minute by the provider.
+                      </Trans>
+                    </span>
+                  </label>
+                </div>
+              ) : null}
               {selfHosted ? (
                 <>
                   <Field className="mt-5">

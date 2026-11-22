@@ -25,6 +25,7 @@ export function useBotCall({
       botColor: bot.color,
       botAvatarSet: bot.avatarSet,
       transcribe: voiceStatus ? Boolean(voiceStatus.transcribe) : undefined,
+      conversation: Boolean(voiceStatus?.conversation),
     });
   }
   /** Returns to the call with this bot when there is one, or starts it. */

@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CallState } from "../../lib/calls/call-session";
-import { endCall } from "../../lib/calls/call-session";
+import { answerCallApproval, endCall } from "../../lib/calls/call-session";
 import { CallCard } from "./CallCard";
 
 vi.mock("@lingui/react/macro", () => ({
@@ -23,6 +23,7 @@ vi.mock("@rakazo/ui-web", () => ({
 vi.mock("react-router-dom", () => ({ useNavigate: () => vi.fn(), useParams: () => ({}) }));
 let session: CallState | null = null;
 vi.mock("../../lib/calls/call-session", () => ({
+  answerCallApproval: vi.fn(),
   endCall: vi.fn(),
   setCallMinimized: vi.fn(),
   toggleMute: vi.fn(),
@@ -156,4 +157,29 @@ it("consumes call Escape before underlying document handlers", async () => {
   document.removeEventListener("keydown", onKey);
   expect(endCall).toHaveBeenCalledOnce();
   expect(underlyingClose).not.toHaveBeenCalled();
+});
+
+it("shows what a protection asks and answers it with Approve or Deny", () => {
+  viewport(1024);
+  render({
+    approval: {
+      runId: "run-1",
+      messageId: "m-1",
+      title: "Change voice → ash?",
+      detail: "voice: ash",
+    },
+  });
+  const card = container.querySelector('[data-testid="call-approval"]');
+  expect(card?.textContent).toContain("Change voice → ash?");
+  const [approve, deny] = [...(card?.querySelectorAll("button") ?? [])];
+  act(() => approve!.click());
+  expect(answerCallApproval).toHaveBeenLastCalledWith("allow");
+  act(() => deny!.click());
+  expect(answerCallApproval).toHaveBeenLastCalledWith("deny");
+});
+
+it("shows no approval card when nothing waits", () => {
+  viewport(1024);
+  render({ approval: null });
+  expect(container.querySelector('[data-testid="call-approval"]')).toBeNull();
 });

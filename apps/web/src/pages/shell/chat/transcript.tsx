@@ -673,6 +673,10 @@ export const Transcript = memo(function Transcript({
                   group={item}
                   revealMessageId={scrollRequest?.messageId}
                   onCallBack={onCallBack}
+                  botName={memberName?.(
+                    item.messages.find((message) => message.role === "bot" && message.botId)
+                      ?.botId ?? undefined,
+                  )}
                 />
               </div>
             );

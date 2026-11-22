@@ -5,6 +5,7 @@ import { Captions, ChevronDown, Mic, MicOff, PhoneOff, Settings } from "lucide-r
 import { useNavigate, useParams } from "react-router-dom";
 import type { CallState } from "../../lib/calls/call-session";
 import {
+  answerCallApproval,
   endCall,
   setCallMinimized,
   toggleMute,
@@ -174,6 +175,38 @@ export function CallCard({ onSettings }: { onSettings: () => void }) {
         <p className="mb-4 text-center text-body text-muted-foreground" dir="auto">
           {call.caption}
         </p>
+      ) : null}
+
+      {call.approval ? (
+        <fieldset
+          data-testid="call-approval"
+          aria-label={t`Approval`}
+          className="mb-4 flex flex-col gap-2 rounded-2xl border border-border bg-card p-4"
+        >
+          <p className="text-body font-medium text-foreground" dir="auto">
+            {call.approval.title}
+          </p>
+          {call.approval.detail ? (
+            <p
+              className="line-clamp-3 whitespace-pre-line text-body text-muted-foreground"
+              dir="auto"
+            >
+              {call.approval.detail}
+            </p>
+          ) : null}
+          <div className="flex gap-2 pt-1">
+            <Button className="flex-1" onClick={() => void answerCallApproval("allow")}>
+              {t`Approve`}
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => void answerCallApproval("deny")}
+            >
+              {t`Deny`}
+            </Button>
+          </div>
+        </fieldset>
       ) : null}
 
       <div className="flex items-center justify-center gap-3">

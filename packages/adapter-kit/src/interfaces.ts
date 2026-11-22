@@ -89,6 +89,10 @@ import type {
   TransactionalEmail,
   UnreferencedMachine,
   VoiceCapabilities,
+  VoiceConversationAttachRequest,
+  VoiceConversationLink,
+  VoiceConversationOpenRequest,
+  VoiceConversationSession,
   VoiceInfo,
   VoiceModelInfo,
   VoiceSynthesizeRequest,
@@ -698,6 +702,16 @@ export interface VoiceProvider {
     request: VoiceTranscribeRequest,
     context: AdapterContext,
   ): Promise<{ text: string; usage?: VoiceUsage; providerRequestId?: string }>;
+  /** Starts a live conversation; present when `capabilities.conversation` is set. */
+  openConversation?(
+    request: VoiceConversationOpenRequest,
+    context: AdapterContext,
+  ): Promise<VoiceConversationSession>;
+  /** Joins a running conversation from the API to follow it and speak into it. */
+  attachConversation?(
+    request: VoiceConversationAttachRequest,
+    context: AdapterContext,
+  ): Promise<VoiceConversationLink>;
 }
 
 /**

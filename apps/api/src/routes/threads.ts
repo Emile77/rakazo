@@ -36,6 +36,7 @@ import {
 } from "@rakazo/db";
 import { HANG_UP_PROMPT } from "../bots/hidden-turns.prompt.js";
 import { assertTeachingSendAllowed } from "../bots/taught-skills.js";
+import { createConversationCalls } from "../calls/conversation-calls.js";
 import { answerComputerRequest } from "../computers/computer-control.js";
 import type { RouterDeps } from "../router.js";
 import {
@@ -84,6 +85,9 @@ export function callMarkerClientNonce(callId: string): string {
   return `${CALL_CLIENT_NONCE_PREFIX}${callId}:marker`;
 }
 
+/** A call's work is open when the turn its latest handoff started has not completed. */
+const SETTLED_CALL_RUN_STATUS = "completed";
+
 /** A send with routines that already has runs saved under its nonce. */
 class SavedSubmission extends Error {}
 
@@ -123,6 +127,7 @@ function calendarDevice(
 
 export function threadsRoutes(ctx: RouterContext) {
   const { deps, authed, callsEnabled, codexCatalog, repos, agentSkills } = ctx;
+  const conversations = createConversationCalls(deps);
   /** The bot a reaction can wake: the thread's bot, or in a group the bot that wrote the message. */
   const reactedBotId = async (target: ThreadTarget, messageId: string) =>
     target.kind === "bot"
@@ -510,6 +515,33 @@ export function threadsRoutes(ctx: RouterContext) {
         }
         return { ok: true as const };
       }),
+      connectCall: callsEnabled.threads.connectCall.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
+        return conversations.connect(context.actor, {
+          botId: target.botId,
+          threadId: target.threadId,
+          callId: input.callId,
+          offerSdp: input.offerSdp,
+          greet: input.greet ?? true,
+        });
+      }),
+      callEvents: callsEnabled.threads.callEvents.handler(async function* ({ context, input }) {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        yield* conversations.events(
+          context.actor,
+          { botId: target.botId, callId: input.callId },
+          context.signal,
+        );
+      }),
+      updateCall: callsEnabled.threads.updateCall.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        if (target.kind !== "bot") throw new IsolationError();
+        conversations.update(context.actor, { ...input, botId: target.botId });
+        return { ok: true as const };
+      }),
       answerCall: callsEnabled.threads.answerCall.handler(async ({ context, input }) => {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         if (target.kind !== "bot") throw new IsolationError();
@@ -541,6 +573,7 @@ export function threadsRoutes(ctx: RouterContext) {
         if (target.kind !== "bot") throw new IsolationError();
         await assertTeachingSendAllowed(deps.prisma, context.actor.spaceId, target.botId);
         const { botId, threadId } = target;
+        await conversations.end(context.actor, input.callId);
         // The bot's own call: its card keeps how long the user stayed on.
         await settleCallRequest(deps, {
           threadId,
@@ -574,6 +607,22 @@ export function threadsRoutes(ctx: RouterContext) {
               select: { id: true },
             });
             if (!userUtterance) return null;
+            // Only a call whose last handoff did not complete needs the bot again; a call
+            // that ended cleanly closes with its marker alone.
+            const handoff = await tx.message.findFirst({
+              where: {
+                threadId,
+                role: "user",
+                clientNonce: { startsWith: `${CALL_CLIENT_NONCE_PREFIX}${input.callId}:` },
+                runId: { not: null },
+              },
+              orderBy: { seq: "desc" },
+              select: { runId: true },
+            });
+            const lastTurn = handoff?.runId
+              ? await tx.run.findUnique({ where: { id: handoff.runId }, select: { status: true } })
+              : null;
+            const pending = Boolean(handoff?.runId && lastTurn?.status !== SETTLED_CALL_RUN_STATUS);
             // The marker's deterministic nonce is the idempotency key: the unique
             // (threadId, clientNonce) index rejects a second hang-up, concurrent or not.
             const message = await createThreadMessageInTransaction(tx, {
@@ -590,6 +639,23 @@ export function threadsRoutes(ctx: RouterContext) {
               type: "thread.message.created",
               payload: { messageId: message.id, role: "bot", blocks, callId: input.callId },
             });
+            if (!pending) {
+              const ended = await appendEventInTransaction(tx, {
+                spaceId: context.actor.spaceId,
+                threadId,
+                botId,
+                type: "thread.call.ended",
+                payload: {
+                  botId,
+                  threadId,
+                  callId: input.callId,
+                  title: "",
+                  farewell: "",
+                  messageId: message.id,
+                },
+              });
+              return { runId: null, eventSeq: ended.seq };
+            }
             const task = await tx.task.create({
               data: {
                 spaceId: context.actor.spaceId,
@@ -636,6 +702,7 @@ export function threadsRoutes(ctx: RouterContext) {
           });
         if (!committed) return { ok: true as const };
         await deps.events.notify(threadId, committed.eventSeq);
+        if (!committed.runId) return { ok: true as const };
         await wakeRun(deps.jobs, committed.runId);
         return { ok: true as const };
       }),

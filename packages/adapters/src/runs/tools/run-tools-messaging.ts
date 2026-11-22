@@ -24,6 +24,8 @@ import { startBackgroundHelper } from "../../tasks/background-helpers.js";
 import type { RunContext } from "../assembly/run-context.js";
 import {
   canPostLongTaskHeadsUp,
+  canPostLongTurnUpdate,
+  canPostStartMessage,
   canPublishDurableProgress,
   flushProgress,
   publishInterimMessage,
@@ -308,7 +310,9 @@ export const messagingTools: ToolHandlers = {
       !repeat &&
       ctx.replyMode === "chat" &&
       !canPublishDurableProgress(reply) &&
-      !canPostLongTaskHeadsUp(ctx)
+      !canPostLongTurnUpdate(reply) &&
+      !canPostLongTaskHeadsUp(ctx) &&
+      !canPostStartMessage(ctx)
     ) {
       reply.workingNotes.length = 0;
       reply.lastDiscardedMidTurnNarration = text;

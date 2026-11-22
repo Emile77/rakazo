@@ -817,15 +817,20 @@ describe("notes that can't be posted as messages", () => {
       startedAt,
       steerAt = -1,
       final = "Done.",
-    }: { startedAt?: Date; steerAt?: number; final?: string } = {},
+      // The first update is the start message, which posts at once: it goes first and is hidden.
+      start = true,
+    }: { startedAt?: Date; steerAt?: number; final?: string; start?: boolean } = {},
   ) => {
+    const startMessage = "Starting the task.";
+    const asked = start ? [startMessage, ...updates] : updates;
+    const askedSteerAt = start && steerAt >= 0 ? steerAt + 1 : steerAt;
     const results: unknown[] = [];
     const { messages, append, finalizeRun } = await runTurn("", false, undefined, [], "fyi", {
       startedAt,
       runtime: async function* (request) {
-        for (const [index, message] of updates.entries()) {
+        for (const [index, message] of asked.entries()) {
           const executionId = `call-${index}`;
-          if (index === steerAt) yield { type: "steered", fromRunUser: true };
+          if (index === askedSteerAt) yield { type: "steered", fromRunUser: true };
           yield { type: "tool", name: "message_user", args: { message }, executionId };
           results.push(await request.executeTool!("message_user", { message }, executionId));
         }
@@ -836,7 +841,12 @@ describe("notes that can't be posted as messages", () => {
     const statuses = progress(append)
       .filter((event) => (event.payload as { reset?: boolean }).reset)
       .map((event) => (event.payload as { text: string }).text);
-    return { results, sent: sentTexts(messages), statuses, reply: finalText(finalizeRun) };
+    return {
+      results: start ? results.slice(1) : results,
+      sent: sentTexts(messages).filter((text) => text !== startMessage),
+      statuses,
+      reply: finalText(finalizeRun),
+    };
   };
 
   it("shows a message_user update it can't post as the working line, with nothing to retry", async () => {
@@ -850,8 +860,9 @@ describe("notes that can't be posted as messages", () => {
     const longTurn = new Date(Date.now() - 120_000);
     expect(await updateTurn([...earlier, "Four."], { startedAt: longTurn })).toEqual({
       results: Array(4).fill({ ok: true }),
-      sent: earlier,
-      statuses: ["Four."],
+      // A long turn has no cap on the updates the bot chooses to send.
+      sent: [...earlier, "Four."],
+      statuses: [],
       reply: "Done.",
     });
     // The person's message restarts the budget: the answer is posted, the next update waits.
@@ -873,6 +884,8 @@ describe("notes that can't be posted as messages", () => {
   it("prefers that update over a note written before it", async () => {
     const { finalizeRun } = await runTurn("", false, undefined, [], "fyi", {
       runtime: async function* (request) {
+        // The start message posts at once; the update after it is the one a fresh turn holds.
+        await request.executeTool!("message_user", { message: "Starting." }, "call-0");
         yield { type: "text", text: "Looking it up." };
         yield { type: "tool", name: "message_user", args: {}, executionId: "call-1" };
         await request.executeTool!("message_user", { message: "The total is 4." }, "call-1");
@@ -916,7 +929,7 @@ describe("notes that can't be posted as messages", () => {
         startedAt: new Date(Date.now() - 120_000),
         final: "",
       }),
-    ).toMatchObject({ sent: ["A.", "B.", "C."], statuses: ["A."], reply: "A." });
+    ).toMatchObject({ sent: ["A.", "B.", "C.", "A."], statuses: [], reply: "" });
   });
 
   it("keeps an update it couldn't post as the reply when the bot then repeats an earlier one", async () => {
@@ -925,7 +938,7 @@ describe("notes that can't be posted as messages", () => {
         startedAt: new Date(Date.now() - 120_000),
         final: "",
       }),
-    ).toMatchObject({ sent: ["A.", "B.", "C."], statuses: ["D."], reply: "D." });
+    ).toMatchObject({ sent: ["A.", "B.", "C.", "D.", "C."], statuses: [], reply: "" });
   });
 
   it("still says when an update was cut off, whether it was posted or shown as the working line", async () => {
@@ -939,7 +952,7 @@ describe("notes that can't be posted as messages", () => {
     expect(posted.sent).toHaveLength(1);
   });
 
-  it("posts one heads-up at once once a fresh turn calls a browser or desktop tool", async () => {
+  it("posts the start message at once and holds the next one on a fresh turn", async () => {
     const sent = async (trigger: string, step: string, graphical = true) => {
       const { messages } = await runTurn("", false, undefined, [], "fyi", {
         trigger,
@@ -960,10 +973,9 @@ describe("notes that can't be posted as messages", () => {
     const headsUp = ["This will take a few minutes."];
     expect(await sent("user", "computer_observe")).toEqual(headsUp);
     expect(await sent("messaging", "browser_snapshot")).toEqual(headsUp);
-    // Other steps, tools this computer lacks, and runs nobody is waiting on keep the
-    // fresh-turn rule.
-    expect(await sent("user", "shell")).toEqual([]);
-    expect(await sent("user", "browser_snapshot", false)).toEqual([]);
+    expect(await sent("user", "shell")).toEqual(headsUp);
+    expect(await sent("user", "browser_snapshot", false)).toEqual(headsUp);
+    // Runs nobody is waiting on post nothing mid-turn.
     for (const trigger of ["routine", "webhook", "reaction", "bot_message"])
       expect(await sent(trigger, "browser_snapshot")).toEqual([]);
   });
@@ -1397,8 +1409,8 @@ describe("a message from the person while the bot works", () => {
         })
       ).messages;
     expect(sentTexts(await answer(true))).toEqual(["Yes, still on it."]);
-    // Without the person's message the turn is too fresh for an interim message.
-    expect(sentTexts(await answer(false))).toEqual([]);
+    // Without the person's message it is the start message, also posted at once.
+    expect(sentTexts(await answer(false))).toEqual(["Yes, still on it."]);
   });
 
   it("keeps a plain answer with no step after it in the reply", async () => {
@@ -1637,16 +1649,15 @@ describe("a message from the person while the bot works", () => {
           yield { type: "done", text: "" };
         },
       });
-      // Each of the first three messages restarts the budget: its answer plus two updates. The
-      // fourth is answered, but its updates stay within the exhausted budget.
-      expect(sentTexts(messages)).toEqual([
-        ...[1, 2, 3].flatMap((index) => [
+      // Every message is answered, and on a long turn the updates the bot chooses to send have
+      // no cap, even after the person's fourth message.
+      expect(sentTexts(messages)).toEqual(
+        [1, 2, 3, 4].flatMap((index) => [
           `Answer ${index}.`,
           `Update ${index}a.`,
           `Update ${index}b.`,
         ]),
-        "Answer 4.",
-      ]);
+      );
     } finally {
       now.mockRestore();
     }

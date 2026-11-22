@@ -54,8 +54,12 @@ import type { SpeechSummarizer } from "./speech-summary.js";
 export interface VoiceDeps {
   prisma: PrismaClient;
   secrets: SecretStore;
-  /** The instance flag (`MCP_ALLOW_PRIVATE_ENDPOINT`). */
-  env?: { mcpAllowPrivateEndpoint?: boolean; deploymentVoice?: DeploymentVoice };
+  /** The instance flags (`MCP_ALLOW_PRIVATE_ENDPOINT`, `VOICE_LIVE_CALLS`). */
+  env?: {
+    mcpAllowPrivateEndpoint?: boolean;
+    voiceLiveCalls?: boolean;
+    deploymentVoice?: DeploymentVoice;
+  };
   /** Set only when `VOICE_SUMMARY_MIN_CHARS` turns spoken summaries on. */
   speechSummary?: { summarize: SpeechSummarizer; minChars: number };
 }
@@ -77,12 +81,15 @@ export async function voiceProviderFor(deps: VoiceDeps, provider: string) {
 /** The catalog as this account sees it: `modelConnection` stays only where it has one. */
 export async function accountVoiceCatalog(deps: VoiceDeps, actor: Pick<Actor, "userId">) {
   const catalog = listVoiceCatalog({ allowPrivateEndpoint: deps.env?.mcpAllowPrivateEndpoint });
+  const liveCalls = voiceLiveCallsEnabled(deps);
   return Promise.all(
-    catalog.map(async ({ modelConnection, ...entry }) =>
-      modelConnection && (await findModelCredential(deps.prisma, actor, entry.id))
+    // Live calls are offered only where this server allows them.
+    catalog.map(async ({ modelConnection, conversation, ...rest }) => {
+      const entry = conversation && liveCalls ? { ...rest, conversation } : rest;
+      return modelConnection && (await findModelCredential(deps.prisma, actor, entry.id))
         ? { ...entry, modelConnection }
-        : entry,
-    ),
+        : entry;
+    }),
   );
 }
 
@@ -107,12 +114,28 @@ export function catalogEntry(provider: string) {
   return voiceCatalogEntry(provider);
 }
 
-export function toVoiceStatus(cred: { provider: string; voiceId: string } | null): VoiceStatus {
+/** Live calls are off unless the deployment sets `VOICE_LIVE_CALLS=true`: they bill by the minute. */
+export function voiceLiveCallsEnabled(deps: Pick<VoiceDeps, "env">): boolean {
+  return deps.env?.voiceLiveCalls === true;
+}
+
+export function toVoiceStatus(
+  cred: { provider: string; voiceId: string; liveCalls?: boolean } | null,
+  options: { liveCalls?: boolean } = {},
+): VoiceStatus {
   const entry = cred ? catalogEntry(cred.provider) : undefined;
   return {
     configured: Boolean(cred),
     ready: Boolean(cred?.voiceId),
     transcribe: Boolean(entry?.transcribe && cred),
+    conversation: Boolean(
+      options.liveCalls &&
+        cred?.liveCalls &&
+        entry &&
+        "conversation" in entry &&
+        entry.conversation &&
+        cred.voiceId,
+    ),
     provider: cred?.provider ?? null,
     voiceId: cred?.voiceId ?? "",
   };
@@ -124,6 +147,7 @@ export function toVoiceCredential(row: {
   isDefault: boolean;
   voiceId: string;
   speechModel?: string | null;
+  liveCalls?: boolean;
   server?: { endpoint: string; sttEndpoint: string; ttsModel: string; sttModel: string };
   /** False when the connection uses the account's model connection instead of a key. */
   hasKey?: boolean;
@@ -136,6 +160,7 @@ export function toVoiceCredential(row: {
     voiceId: row.voiceId,
     speechModel: row.speechModel ?? "",
     transcribe: Boolean(catalogEntry(row.provider)?.transcribe),
+    liveCalls: Boolean(row.liveCalls),
     endpoint: row.server?.endpoint ?? "",
     sttEndpoint: row.server?.sttEndpoint ?? "",
     ttsModel: row.server?.ttsModel ?? "",
@@ -281,7 +306,7 @@ export async function includedVoice(
 /** Status must not decrypt a user's saved connection just to advertise capabilities. */
 export async function effectiveVoiceStatus(deps: VoiceDeps, actor: Actor, scope?: SettingsScope) {
   const cred = await findDefaultVoiceCredential(deps.prisma, actor, scope);
-  if (cred) return toVoiceStatus(cred);
+  if (cred) return toVoiceStatus(cred, { liveCalls: voiceLiveCallsEnabled(deps) });
   const included = await includedVoice(deps, actor, scope);
   if (!included || (!included.synthesize && !included.transcribe)) return toVoiceStatus(null);
   const status = toVoiceStatus({
@@ -383,6 +408,8 @@ export async function loadVoiceCredential(
         provider: deployment.provider,
         voiceId: deployment.voiceId,
         speechModel: deployment.pricing.synthesize.model,
+        // The operator funds speech only; live calls bill by the minute and stay an opt-in.
+        liveCalls: false,
       },
       apiKey,
       linked: false,
@@ -443,6 +470,8 @@ export async function persistVoiceCredential(
     sttApiKey?: string;
     ttsModel?: string;
     sttModel?: string;
+    /** Opt into live calls; kept only for a provider that can talk live. */
+    liveCalls?: boolean;
     /** Which copy the connection becomes the default voice in; omitted is what applies. */
     scope?: SettingsScope;
     signal?: AbortSignal;
@@ -527,6 +556,10 @@ export async function persistVoiceCredential(
     voiceId = voices[0]?.id ?? "";
     validVoiceIds = voices.map((voice) => voice.id);
   }
+  const liveEntry = voiceCatalogEntry(input.provider);
+  const liveCalls = Boolean(
+    input.liveCalls && liveEntry && "conversation" in liveEntry && liveEntry.conversation,
+  );
   const stored = await deps.secrets.put(plaintext, voiceContext(actor, input.signal));
   const cred = await withTransactionRetry(() =>
     deps.prisma.$transaction(
@@ -550,11 +583,12 @@ export async function persistVoiceCredential(
                 userId: actor.userId,
                 provider: input.provider,
                 secretId: secret.id,
+                liveCalls,
               },
             })
           : await tx.userVoiceCredential.update({
               where: { id: existing.id },
-              data: { secretId: secret.id },
+              data: { secretId: secret.id, liveCalls },
             });
         await lockSpaceSettings(tx, actor);
         const target = await voicePreferenceTarget(tx, actor, input.scope);
@@ -653,6 +687,30 @@ export async function disconnectVoiceCredential(
     ),
   );
   return { ok: true as const };
+}
+
+/** Turns live calls on or off for a connection that can talk live, without a new key. */
+export async function updateVoiceLiveCalls(
+  deps: VoiceDeps,
+  actor: Actor,
+  input: { provider: string; liveCalls: boolean },
+): Promise<VoiceCredential> {
+  const entry = voiceCatalogEntry(input.provider);
+  if (!entry || !("conversation" in entry) || !entry.conversation) {
+    throw new ORPCError("BAD_REQUEST", { message: "This voice provider has no live calls." });
+  }
+  const found = await deps.prisma.userVoiceCredential.findFirst({
+    where: { userId: actor.userId, provider: input.provider },
+    orderBy: newestVoiceCredentialOrder,
+  });
+  if (!found) {
+    throw new ORPCError("BAD_REQUEST", { message: "Connect a voice provider first." });
+  }
+  const saved = await deps.prisma.userVoiceCredential.update({
+    where: { id: found.id },
+    data: { liveCalls: input.liveCalls },
+  });
+  return toVoiceCredential({ ...saved, isDefault: false, voiceId: "" });
 }
 
 export async function updateVoiceSpeechModel(

@@ -162,6 +162,8 @@ export const modelsRpc = {
             sttApiKey: z.string().max(4096).optional(),
             ttsModel: z.string().max(200).optional(),
             sttModel: z.string().max(200).optional(),
+            /** Opt into live calls; ignored unless the provider and server allow them. */
+            liveCalls: z.boolean().optional(),
             /** Where the connection becomes the default voice. */
             scope: SettingsScopeSchema.optional(),
           })
@@ -184,6 +186,9 @@ export const modelsRpc = {
         }),
       )
       .output(VoiceStatusSchema),
+    setLiveCalls: oc
+      .input(z.object({ provider: z.string().min(1), liveCalls: z.boolean() }))
+      .output(VoiceCredentialSchema),
     setSpeechModel: oc
       .input(
         settingsScopeInput.extend({

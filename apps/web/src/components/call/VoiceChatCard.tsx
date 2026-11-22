@@ -5,6 +5,7 @@ import {
   callRequestBlock,
   speechFromBlocks,
   voiceChatDuration,
+  voiceChatSpeaker,
   voiceChatSummary,
 } from "@rakazo/core";
 import { Button, buttonVariants, Collapsible, CollapsibleContent, cn } from "@rakazo/ui-web";
@@ -16,10 +17,13 @@ export function VoiceChatCard({
   group,
   revealMessageId,
   onCallBack,
+  botName,
 }: {
   group: VoiceChatGroup;
   revealMessageId?: string;
   onCallBack?: () => void;
+  /** Labels the bot's own replies when the live voice model also speaks in the card. */
+  botName?: string;
 }) {
   const { t } = useLingui();
   const [open, setOpen] = useState(false);
@@ -67,11 +71,19 @@ export function VoiceChatCard({
   // The opening was spoken, not posted: show it as the call's first bot turn.
   const transcript = [
     ...(request && !missed && !ringing && request.opening
-      ? [{ id: `${group.key}:opening`, role: "bot", text: request.opening }]
+      ? [
+          {
+            id: `${group.key}:opening`,
+            role: "bot",
+            speaker: "bot" as const,
+            text: request.opening,
+          },
+        ]
       : []),
     ...group.messages.map((message) => ({
       id: message.id,
       role: message.role,
+      speaker: voiceChatSpeaker(message),
       // The request and the marker are the card's own lines, never transcript turns.
       text:
         message === group.marker || callRequestBlock(message.blocks)
@@ -80,6 +92,10 @@ export function VoiceChatCard({
     })),
   ];
   const expandable = transcript.some((line) => line.text);
+  // Speaker labels only matter when two voices answer: the live model and the bot.
+  const labelled = transcript.some((line) => line.text && line.speaker === "voice");
+  const speakerLabel = (speaker: "user" | "voice" | "bot") =>
+    speaker === "user" ? t`You` : speaker === "voice" ? t`Voice` : (botName ?? t`Bot`);
   const Icon = !request ? Phone : missed ? PhoneMissed : PhoneIncoming;
   return (
     <BuiCard
@@ -146,18 +162,30 @@ export function VoiceChatCard({
                 return <span key={line.id} data-message-id={line.id} className="sr-only" />;
               }
               return (
-                <p
+                <div
                   key={line.id}
                   data-message-id={line.id}
-                  dir="auto"
-                  className={cn(
-                    line.role === "user"
-                      ? "text-end text-muted-foreground"
-                      : "rounded-md bg-muted/60 px-3 py-2 text-foreground",
-                  )}
+                  data-speaker={line.speaker}
+                  className={cn(line.role === "user" && "text-end")}
                 >
-                  {line.text}
-                </p>
+                  {labelled ? (
+                    <span className="block px-1 text-label text-muted-foreground">
+                      {speakerLabel(line.speaker)}
+                    </span>
+                  ) : null}
+                  <p
+                    dir="auto"
+                    className={cn(
+                      line.role === "user"
+                        ? "text-muted-foreground"
+                        : line.speaker === "voice"
+                          ? "rounded-md bg-muted/30 px-3 py-2 text-foreground"
+                          : "rounded-md bg-muted/60 px-3 py-2 text-foreground",
+                    )}
+                  >
+                    {line.text}
+                  </p>
+                </div>
               );
             })}
           </div>

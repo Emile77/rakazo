@@ -841,6 +841,7 @@ function SpaceShell() {
       <IncomingCall
         bots={bootstrapMe?.phoneCallsEnabled ? bots : []}
         transcribe={voiceStatus ? Boolean(voiceStatus.transcribe) : undefined}
+        conversation={Boolean(voiceStatus?.conversation)}
         onAnswered={(botId) => navigate(`/app/${botId}`)}
       />
 
